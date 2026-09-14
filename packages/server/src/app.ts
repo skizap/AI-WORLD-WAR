@@ -223,7 +223,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       reply.header('Content-Disposition', `attachment; filename="${r.id}_metrics.csv"`);
       return [header, ...lines].join('\n');
     }
-    const full = { simulationId: r.id, config: r.sim.config, world: r.sim.world, snapshots: r.sim.allSnapshots(), metrics, decisions: Object.fromEntries([...deps.db.all<{ turn: number; nation_id: string; response_json: string; report_json: string }>(`SELECT turn, nation_id, response_json, report_json FROM decisions WHERE sim_id = ?`, r.id).map((d) => [`${d.turn}:${d.nation_id}`, { response: JSON.parse(d.response_json), report: JSON.parse(d.report_json) }])] as Record<string, unknown>[]) };
+    const decisions: Record<string, unknown> = {};
+    for (const d of deps.db.all<{ turn: number; nation_id: string; response_json: string; report_json: string }>(
+      `SELECT turn, nation_id, response_json, report_json FROM decisions WHERE sim_id = ?`,
+      r.id,
+    )) {
+      decisions[`${d.turn}:${d.nation_id}`] = { response: JSON.parse(d.response_json), report: JSON.parse(d.report_json) };
+    }
+    const full = { simulationId: r.id, config: r.sim.config, world: r.sim.world, snapshots: r.sim.allSnapshots(), metrics, decisions };
     reply.header('Content-Type', 'application/json');
     reply.header('Content-Disposition', `attachment; filename="${r.id}_run.json"`);
     return full;

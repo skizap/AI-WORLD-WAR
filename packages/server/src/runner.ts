@@ -171,7 +171,7 @@ export class SimRunner {
         await this.sim.step();
         this.persistDelta();
         // Persist a snapshot whenever a turn completes.
-        if (this.sim.phase === 'turn_end' || this.sim.status === 'completed') {
+        if (this.sim.phase === 'turn_end' || (this.sim.status as SimulationStatus) === 'completed') {
           this.persistSnapshot(this.sim.world.turn);
           this.persistMetrics(this.sim.world.turn);
         }

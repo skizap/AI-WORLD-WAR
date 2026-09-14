@@ -85,12 +85,13 @@ export class ExperimentManager {
         if (!job) break;
         const started = new Date().toISOString();
         try {
+          const base = this.baseConfig as SimulationConfig;
           const config: SimulationConfig = {
-            ...(this.baseConfig as SimulationConfig),
+            ...base,
             seed: job.seed,
             scenarioId: job.scenarioId,
             provider: spec.provider,
-            models: { ...this.baseConfig.models, nationAgent: job.model, worldNarrator: job.model, repair: job.model },
+            models: { ...base.models, nationAgent: job.model, worldNarrator: job.model, repair: job.model },
             ...(spec.configOverrides as Partial<SimulationConfig> | undefined),
           } as SimulationConfig;
           const metrics = await this.runOne(config);
