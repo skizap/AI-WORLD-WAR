@@ -1,0 +1,36 @@
+{
+  "name": "ai-world-war",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AI-WORLD-WAR: a fictional AI governance & geopolitical wargame RESEARCH SIMULATION. Not a forecasting or decision-support system.",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "install:all": "npm install",
+    "dev:server": "npm run dev -w @aiww/server",
+    "dev:ui": "npm run dev -w @aiww/ui",
+    "dev": "sh -c 'npm run dev -w @aiww/server & npm run dev -w @aiww/ui & wait'",
+    "build": "npm run build -w @aiww/ui",
+    "start": "npm run build -w @aiww/ui && npm run start -w @aiww/server",
+    "demo": "npm run demo -w @aiww/engine",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p packages/schemas && tsc --noEmit -p packages/engine && tsc --noEmit -p packages/prompts && tsc --noEmit -p packages/server && tsc --noEmit -p packages/ui"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/user-event": "^14.5.2",
+    "fast-check": "^3.22.0",
+    "jsdom": "^25.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
