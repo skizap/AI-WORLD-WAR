@@ -46,7 +46,9 @@ export class SimRunner {
       scenario: getScenario(config.scenarioId),
       agentProvider,
       narratorProvider,
-      simulationId: id,
+      // Deterministic world id: same seed + config produce identical worlds
+      // (the runner id above is the unique DB handle).
+      simulationId: `sim_${computeConfigHash(config).slice(0, 8)}_${config.seed}`,
     });
   }
 
