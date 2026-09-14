@@ -2,9 +2,13 @@
  * SQLite persistence via node:sqlite (built into Node >= 22.5), behind a
  * repository-style API so a PostgreSQL backend can replace it later.
  */
-import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { createRequire } from 'node:module';
+
+// node:sqlite is a Node built-in (>= 22.5); loaded via createRequire so that
+// bundler-based test runners do not try to resolve it as a package.
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 
 export interface SimulationRow {
   id: string;
@@ -19,7 +23,7 @@ export interface SimulationRow {
 }
 
 export class Db {
-  private db: DatabaseSync;
+  private db: import('node:sqlite').DatabaseSync;
 
   constructor(path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });

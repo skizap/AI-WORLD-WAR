@@ -79,7 +79,10 @@ export class SimRunner {
     this.persistSnapshot(0);
   }
 
+  private persistedSnapshotTurns = new Set<number>();
+
   private persistSnapshot(turn: number): void {
+    this.persistedSnapshotTurns.add(turn);
     const snap = this.sim.getSnapshot(turn);
     if (!snap) return;
     this.db.exec(
@@ -170,11 +173,7 @@ export class SimRunner {
         if (this.sim.phase === 'awaiting_approval') break;
         await this.sim.step();
         this.persistDelta();
-        // Persist a snapshot whenever a turn completes.
-        if (this.sim.phase === 'turn_end' || (this.sim.status as SimulationStatus) === 'completed') {
-          this.persistSnapshot(this.sim.world.turn);
-          this.persistMetrics(this.sim.world.turn);
-        }
+        this.persistNewSnapshots();
       }
     } catch (err) {
       this.sim.status = 'failed';
@@ -206,11 +205,18 @@ export class SimRunner {
     this.paused = true;
     await this.sim.step();
     this.persistDelta();
-    if (this.sim.phase === 'turn_end' || this.sim.status === 'completed') {
-      this.persistSnapshot(this.sim.world.turn);
-      this.persistMetrics(this.sim.world.turn);
-    }
+    this.persistNewSnapshots();
     this.persistRow();
+  }
+
+  /** Persist any snapshots produced by the engine that are not yet stored. */
+  private persistNewSnapshots(): void {
+    for (const t of this.sim.snapshotTurns()) {
+      if (!this.persistedSnapshotTurns.has(t)) {
+        this.persistSnapshot(t);
+        this.persistMetrics(t);
+      }
+    }
   }
 
   stop(): void {

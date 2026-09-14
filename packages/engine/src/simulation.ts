@@ -128,6 +128,11 @@ export class Simulation {
     return this.snapshots.get(turn);
   }
 
+  /** Turn numbers that currently have a persisted-quality snapshot. */
+  snapshotTurns(): number[] {
+    return [...this.snapshots.keys()].sort((a, b) => a - b);
+  }
+
   allSnapshots(): WorldState[] {
     return [...this.snapshots.entries()].sort((a, b) => a[0] - b[0]).map(([, s]) => s);
   }

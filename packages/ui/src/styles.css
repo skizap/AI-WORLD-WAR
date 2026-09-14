@@ -1,0 +1,59 @@
+/* Accessible, high-contrast research dashboard styles. Labels accompany all
+   color coding; focus states are always visible. */
+:root {
+  --bg: #0f1420;
+  --panel: #1a2233;
+  --panel-2: #222c42;
+  --text: #e8ecf5;
+  --muted: #9aa7bd;
+  --accent: #4da3ff;
+  --ok: #4fd28a;
+  --warn: #ffcc66;
+  --danger: #ff7a7a;
+  --nuclear: #d78cff;
+  --border: #33405c;
+  --radius: 10px;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; line-height: 1.45; }
+button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 14px; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+input, select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+.app { max-width: 1400px; margin: 0 auto; padding: 16px; }
+header.topbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 8px 0 16px; }
+header.topbar h1 { font-size: 20px; margin: 0; }
+.notice { background: #33270f; border: 1px solid #7a5b17; color: var(--warn); padding: 10px 14px; border-radius: var(--radius); font-size: 13px; }
+nav.tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+nav.tabs button[aria-selected='true'] { background: var(--accent); color: #06101f; font-weight: 600; }
+.grid { display: grid; gap: 14px; }
+.grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+.grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+.panel h2 { margin: 0 0 10px; font-size: 15px; }
+.panel h3 { margin: 12px 0 6px; font-size: 13px; color: var(--muted); }
+.muted { color: var(--muted); font-size: 13px; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; margin-right: 6px; }
+.badge.severe { background: #3d1414; border-color: var(--danger); color: var(--danger); }
+.badge.info { background: #10233d; border-color: var(--accent); color: var(--accent); }
+.eventfeed { max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.event { padding: 6px 10px; border-radius: 8px; background: var(--panel-2); font-size: 13px; }
+.event.rejected { border-left: 3px solid var(--danger); }
+.event.accepted { border-left: 3px solid var(--ok); }
+.event.narrator { border-left: 3px solid var(--accent); }
+.progress { height: 10px; background: var(--panel-2); border-radius: 999px; overflow: hidden; }
+.progress > div { height: 100%; background: var(--accent); }
+.varbar { display: grid; grid-template-columns: 130px 1fr 52px; gap: 8px; align-items: center; font-size: 12px; margin: 3px 0; }
+.varbar .bar { background: var(--panel-2); border-radius: 999px; height: 8px; overflow: hidden; }
+.varbar .bar > div { height: 100%; background: var(--accent); }
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th, .table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.heatmap { display: grid; gap: 2px; font-size: 11px; }
+.heatmap .cell { padding: 5px 4px; text-align: center; border-radius: 4px; color: #0b1020; font-weight: 600; }
+.approval { border: 1px solid var(--danger); border-radius: 8px; padding: 10px; margin: 8px 0; background: #2a1414; }
+.fieldrow { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+.fieldrow label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.checkbox-row { display: flex; gap: 10px; align-items: flex-start; margin: 10px 0; font-size: 14px; }
+.stat { font-size: 24px; font-weight: 700; }
+.footer-note { margin-top: 24px; color: var(--muted); font-size: 12px; }
