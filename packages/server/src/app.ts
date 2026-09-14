@@ -28,11 +28,16 @@ export interface AppDeps {
   experiments: ExperimentManager;
   client: OpenRouterClient | null;
   defaultProvider: 'mock' | 'openrouter';
+  defaultConfig?: SimulationConfig;
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: true });
+  const effectiveDefaultConfig = deps.defaultConfig ?? {
+    ...DEFAULT_SIMULATION_CONFIG,
+    provider: deps.defaultProvider,
+  };
 
   // Serve the built dashboard (packages/ui/dist) when present.
   const uiDist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'ui', 'dist');
@@ -56,7 +61,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     codeVersion: CODE_VERSION,
     promptVersion: PROMPT_VERSION,
     catalogVersion: BASELINE_CATALOG.version,
-    defaultConfig: DEFAULT_SIMULATION_CONFIG,
+    defaultConfig: effectiveDefaultConfig,
     defaultProvider: deps.defaultProvider,
     openRouterKeyConfigured: deps.client?.apiKeyPresent ?? false,
     packs: ALL_PACKS.map((p) => ({ id: p.id, name: p.name, description: p.description, nations: p.nations.map((n) => ({ id: n.id, name: n.name, description: n.description, governanceType: n.governanceType, strategicOrientation: n.strategicOrientation, behavior: n.behavior, mapPosition: n.mapPosition, goals: n.initialGoals })) })),
@@ -80,13 +85,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // ---------------------------------------------------------------- config validation
   function normalizeConfig(body: unknown): SimulationConfig {
     const merged = {
-      ...DEFAULT_SIMULATION_CONFIG,
+      ...effectiveDefaultConfig,
       ...(body as Record<string, unknown>),
-      observation: { ...DEFAULT_SIMULATION_CONFIG.observation, ...((body as Record<string, unknown>)['observation'] as object ?? {}) },
-      limits: { ...DEFAULT_SIMULATION_CONFIG.limits, ...((body as Record<string, unknown>)['limits'] as object ?? {}) },
-      models: { ...DEFAULT_SIMULATION_CONFIG.models, ...((body as Record<string, unknown>)['models'] as object ?? {}) },
-      scoring: { ...DEFAULT_SIMULATION_CONFIG.scoring, ...((body as Record<string, unknown>)['scoring'] as object ?? {}) },
-      stopConditions: { ...DEFAULT_SIMULATION_CONFIG.stopConditions, ...((body as Record<string, unknown>)['stopConditions'] as object ?? {}) },
+      observation: { ...effectiveDefaultConfig.observation, ...((body as Record<string, unknown>)['observation'] as object ?? {}) },
+      limits: { ...effectiveDefaultConfig.limits, ...((body as Record<string, unknown>)['limits'] as object ?? {}) },
+      models: { ...effectiveDefaultConfig.models, ...((body as Record<string, unknown>)['models'] as object ?? {}) },
+      scoring: { ...effectiveDefaultConfig.scoring, ...((body as Record<string, unknown>)['scoring'] as object ?? {}) },
+      stopConditions: { ...effectiveDefaultConfig.stopConditions, ...((body as Record<string, unknown>)['stopConditions'] as object ?? {}) },
     };
     const parsed = SimulationConfig.safeParse(merged);
     if (!parsed.success) {
