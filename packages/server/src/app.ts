@@ -3,6 +3,10 @@
  */
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_SIMULATION_CONFIG,
   ExperimentSpec,
@@ -29,6 +33,20 @@ export interface AppDeps {
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: true });
+
+  // Serve the built dashboard (packages/ui/dist) when present.
+  const uiDist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'ui', 'dist');
+  if (existsSync(join(uiDist, 'index.html'))) {
+    await app.register(fastifyStatic, { root: uiDist, prefix: '/' });
+    // SPA fallback: any non-API GET renders the dashboard shell.
+    app.setNotFoundHandler((req, reply) => {
+      if (req.method === 'GET' && !req.url.startsWith('/api')) {
+        void reply.sendFile('index.html', uiDist);
+        return;
+      }
+      reply.code(404).send({ message: 'Not found' });
+    });
+  }
 
   const badRequest = (msg: string) => ({ statusCode: 400 as const, error: 'Bad Request', message: msg });
 
