@@ -85,7 +85,8 @@ npm run dev       # development: API on :8787 + Vite dev server on :5173
   baseline condition.
 - **Deterministic engine**: seeded RNG, validated state transitions, clamping,
   pairwise relationship state, alliance/dispute tracking, passive mechanics,
-  second-order effects. Same seed + config => byte-identical replay.
+  second-order effects. Same seed + config reproduces the run in mock mode
+  (world-state JSON equality in the tests).
 - **Three baseline scenarios**: neutral, prior invasion, prior cyber incident
   (all fictional and abstract).
 - **Autonomous resolution**: every validated action, including violent and
@@ -101,10 +102,12 @@ npm run dev       # development: API on :8787 + Vite dev server on :5173
   bootstrap-CI aggregates and full provenance (config hash, code version,
   prompt version, effective model slug, seed). Mock and OpenRouter jobs use
   their requested provider; they are never silently substituted.
-- **Dashboard**: per-nation model setup, autonomous live simulation view,
-  nation detail, analytics charts (escalation over time, severity stacks,
-  cumulative scores, global stability), exports, and a replay scrubber with
-  deterministic mock re-run.
+- **Dashboard**: per-nation model setup with OpenRouter catalog browser,
+  autonomous live simulation view, nation detail, analytics charts (escalation
+  over time, severity stacks, cumulative scores, global stability, spikes),
+  CSV/JSON exports, a replay scrubber with deterministic mock re-run, and
+  experimental controls (observation ablations, severity visibility, scoring
+  scheme).
 
 ## Architecture (monorepo)
 
@@ -119,6 +122,18 @@ npm run dev       # development: API on :8787 + Vite dev server on :5173
 See `docs/ARCHITECTURE.md` for data flow and `docs/API.md` for endpoint
 schemas.
 
+## Documentation map
+
+| Document | Contents |
+|---|---|
+| `docs/ARCHITECTURE.md` | Components, per-turn data flow, determinism, persistence |
+| `docs/API.md` | HTTP endpoints, statuses, phases |
+| `docs/CONFIGURATION.md` | `SimulationConfig` fields, bounds, catalog parameters, `.env` |
+| `docs/PROMPTS.md` | Versioned prompt templates and placeholder contract |
+| `docs/SAFETY.md` | Hard boundaries, threat model, known gaps |
+| `docs/LIMITATIONS.md` | Construct validity, extrapolation limits, engineering gaps |
+| `docs/RESEARCH_NOTES.md` | Paper-inspired vs. original design |
+
 ## Safety boundaries
 
 - Fictional countries/geography only; no connections to real governments,
@@ -126,22 +141,29 @@ schemas.
   cyber tooling.
 - Model output can never execute code or mutate state outside the validated
   engine; URLs, shell syntax, and operational content are rejected at
-  validation.
-- Scenario setup rejects real-world country names; severe fictional events are
-  clearly labeled.
+  validation in action ids and messages (rationale text is length-capped only).
+- All nations and scenarios are built-in hardcoded fictional data; only the 27
+  cataloged action ids and the fictional nation ids are accepted, and severe
+  fictional events are labeled in the UI.
+- `SimulationConfig.safetyMode` is declared (`fictional_only` default) but is
+  not enforced by any code path yet — see `docs/SAFETY.md` for what is actually
+  enforced.
 - `.env` is gitignored; API keys are never logged or exported.
 
 See `docs/SAFETY.md`.
 
 ## Configuration
 
-Every tunable (turn counts, action limits, ablations, scoring scheme, stop
-conditions, passive mechanics, seeds, models) is documented in
-`docs/CONFIGURATION.md` and exposed through `SimulationConfig`.
+Turn counts, action limits, observation ablations, scoring scheme, stop
+conditions, passive mechanics, seeds, and models are exposed through
+`SimulationConfig` and documented in `docs/CONFIGURATION.md`. A few server-side
+choices are hard-coded (narrator/repair sampling, content-scan scope) and are
+called out in that document.
 
 ## Known limitations
 
-Prompt sensitivity, construct validity, synthetic transition rules, and the
+Prompt sensitivity, construct validity, synthetic transition rules, engineering
+gaps (declared-but-unenforced config fields, no run resume, no auth), and the
 impossibility of extrapolating these fictional simulation scores to real
 governments are covered in `docs/LIMITATIONS.md`. The original paper found
 model-dependent escalation behavior in **its own setup**; those findings are
