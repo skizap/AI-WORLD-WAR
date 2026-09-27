@@ -251,7 +251,21 @@ export const BASELINE_PACK: NationPack = {
   nations: NATIONS,
 };
 
-export const ALL_PACKS: NationPack[] = [BASELINE_PACK];
+// Keep baseline_8 unchanged for recorded runs; the world-facing profile is a versioned content pack.
+export const AURELIA_WORLD_PACK_V2: NationPack = {
+  id: 'aurelia_world_8_v2',
+  name: 'Aurelia World-8 v2 (fictional)',
+  description:
+    'The eight existing fictional agents framed in the fictional world of Aurelia. Earth-derived atlas boundaries are reference geometry only and do not define simulation ownership or mechanics.',
+  nations: NATIONS.map((profile) => ({
+    ...profile,
+    ...(profile.id === 'amber'
+      ? { background: 'A mid-sized trading democracy in the western reaches of Aurelia, a fictional world. Amber invests heavily in renewable infrastructure and diplomatic mediation.' }
+      : {}),
+  })),
+};
+
+export const ALL_PACKS: NationPack[] = [BASELINE_PACK, AURELIA_WORLD_PACK_V2];
 
 export function getPack(id: string): NationPack {
   const pack = ALL_PACKS.find((p) => p.id === id);

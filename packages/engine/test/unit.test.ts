@@ -11,6 +11,8 @@ import {
 import {
   BASELINE_CATALOG,
   BASELINE_PACK,
+  AURELIA_WORLD_PACK_V2,
+  ALL_PACKS,
   DeterministicNarratorProvider,
   MockAgentProvider,
   NEUTRAL_SCENARIO,
@@ -31,6 +33,7 @@ import { Rng, hashString, mulberry32 } from '../src/rng.js';
 
 const cfg = (over: Partial<typeof DEFAULT_SIMULATION_CONFIG> = {}) => ({
   ...DEFAULT_SIMULATION_CONFIG,
+  fictionPackId: BASELINE_PACK.id,
   ...over,
   observation: { ...DEFAULT_SIMULATION_CONFIG.observation, ...(over.observation ?? {}) },
   limits: { ...DEFAULT_SIMULATION_CONFIG.limits, ...(over.limits ?? {}) },
@@ -69,6 +72,21 @@ describe('action catalog', () => {
   it('assigns the six severity categories across the catalog', () => {
     const cats = new Set(BASELINE_CATALOG.actions.map((a) => a.category));
     expect([...cats].sort()).toHaveLength(6);
+  });
+});
+
+describe('versioned fictional world content', () => {
+  it('preserves the baseline pack and provides a separate world-framed version', () => {
+    const baselineAmber = BASELINE_PACK.nations.find((nation) => nation.id === 'amber');
+    const worldAmber = AURELIA_WORLD_PACK_V2.nations.find((nation) => nation.id === 'amber');
+
+    expect(DEFAULT_SIMULATION_CONFIG.fictionPackId).toBe(AURELIA_WORLD_PACK_V2.id);
+    expect(ALL_PACKS.map((pack) => pack.id)).toEqual(['baseline_8', 'aurelia_world_8_v2']);
+    expect(baselineAmber?.background).toContain('fictional continent of Aurelia');
+    expect(worldAmber?.background).toContain('Aurelia, a fictional world');
+    expect(AURELIA_WORLD_PACK_V2.nations.map((nation) => nation.id)).toEqual(BASELINE_PACK.nations.map((nation) => nation.id));
+    expect(AURELIA_WORLD_PACK_V2.nations.filter((nation) => nation.background !== BASELINE_PACK.nations.find((baseline) => baseline.id === nation.id)?.background))
+      .toHaveLength(1);
   });
 });
 

@@ -1,5 +1,6 @@
 /** Typed fetch helpers for the AI-WORLD-WAR API. */
 import type { RunMetrics, SimulationConfig, WorldEvent, WorldState } from '@aiww/schemas';
+import type { AtlasTopology } from './atlas/types';
 
 const BASE = '/api';
 
@@ -21,6 +22,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function asset<T>(path: string): Promise<T> {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(`Local asset request failed: HTTP ${response.status}`);
+  return (await response.json()) as T;
+}
+
 export interface Meta {
   notice: string;
   codeVersion: string;
@@ -36,15 +43,16 @@ export interface Meta {
 }
 
 export const api = {
+  atlas: () => asset<AtlasTopology>('/atlas/aurelia-atlas.topo.json'),
   meta: () => req<Meta>('/meta'),
   health: () => req<{ configured: boolean; ok: boolean; detail: string }>('/openrouter/health'),
   models: () => req<{ count: number; models: { id: string; name?: string; contextLength?: number; pricing?: Record<string, string> }[] }>('/openrouter/models'),
   createSimulation: (config: Partial<SimulationConfig>) =>
     req<{ id: string; status: string }>('/simulations', { method: 'POST', body: JSON.stringify(config) }),
-  listSimulations: () =>
-    req<{ id: string; status: string; turn: number; totalTurns: number; scenarioId: string; provider: string; model: string }[]>('/simulations'),
-  getSimulation: (id: string) =>
-    req<{ id: string; status: string; phase: string; stopReason: string | null; turn: number; totalTurns: number; world: WorldState; config: SimulationConfig }>(`/simulations/${id}`),
+  listSimulations: (init?: Pick<RequestInit, 'signal'>) =>
+    req<{ id: string; status: string; turn: number; totalTurns: number; scenarioId: string; provider: string; model: string }[]>('/simulations', init),
+  getSimulation: (id: string, init?: Pick<RequestInit, 'signal'>) =>
+    req<{ id: string; status: string; phase: string; stopReason: string | null; turn: number; totalTurns: number; world: WorldState; config: SimulationConfig }>(`/simulations/${id}`, init),
   control: (id: string, action: 'start' | 'stop') =>
     req<{ id: string; status: string }>(`/simulations/${id}/${action}`, { method: 'POST' }),
   metrics: (id: string) => req<RunMetrics>(`/simulations/${id}/metrics`),

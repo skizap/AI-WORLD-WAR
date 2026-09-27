@@ -79,8 +79,8 @@ describe('UI smoke checks', () => {
 
   it('renders the simulation notice and creates without a blocking acknowledgment', async () => {
     render(<App />);
-    await waitFor(() => screen.getByText(/RESEARCH SIMULATION with FICTIONAL nations/));
-    expect(screen.getByRole('button', { name: 'Setup' })).toBeTruthy();
+    await waitFor(() => screen.getByText(/RESEARCH SIMULATION with fictional nation identities/));
+    expect(screen.getByRole('tab', { name: 'Setup' })).toBeTruthy();
     const createBtn = await waitFor(() => screen.getByRole('button', { name: /Create simulation/ })) as HTMLButtonElement;
     expect(createBtn.disabled).toBe(false);
     expect(screen.getByRole('button', { name: /Apply to all nations/ })).toBeTruthy();
@@ -90,9 +90,9 @@ describe('UI smoke checks', () => {
 
   it('renders tab navigation across all five views', async () => {
     render(<App />);
-    await waitFor(() => screen.getAllByRole('button', { name: 'Replay' }).length > 0);
+    await waitFor(() => screen.getAllByRole('tab', { name: 'Replay' }).length > 0);
     for (const tab of ['Setup', 'Live', 'Nations', 'Analytics', 'Replay']) {
-      expect(screen.getByRole('button', { name: tab })).toBeTruthy();
+      expect(screen.getByRole('tab', { name: tab })).toBeTruthy();
     }
   });
 });

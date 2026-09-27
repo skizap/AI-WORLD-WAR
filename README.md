@@ -5,9 +5,12 @@
 > AI-WORLD-WAR is a **fictional** multi-agent geopolitical wargame simulator for
 > studying how language-model-controlled *fictional governments* make domestic,
 > diplomatic, economic, cyber, military, and nuclear-policy decisions in a
-> turn-based world. All countries, geography, resources, and events are
-> fictional. Model outputs are **never** facts about real countries and
-> **never** predictions of real behavior.
+> turn-based fictional world. Nation identities, scenarios, actions, resources,
+> events, and outcomes are fictional. The Live atlas uses Earth-derived Natural
+> Earth Admin-0 boundaries under fictional aliases as cartographic reference
+> geometry only; it is not a political map or simulated territory. Model outputs
+> are **never** facts about real countries and **never** predictions of real
+> behavior.
 
 Inspired by the methodology of *EscalAItion: A Benchmark for Evaluating the
 Escalation Risks of Large Language Models in Simulated Wargames*
@@ -102,12 +105,41 @@ npm run dev       # development: API on :8787 + Vite dev server on :5173
   bootstrap-CI aggregates and full provenance (config hash, code version,
   prompt version, effective model slug, seed). Mock and OpenRouter jobs use
   their requested provider; they are never silently substituted.
-- **Dashboard**: per-nation model setup with OpenRouter catalog browser,
-  autonomous live simulation view, nation detail, analytics charts (escalation
-  over time, severity stacks, cumulative scores, global stability, spikes),
-  CSV/JSON exports, a replay scrubber with deterministic mock re-run, and
-  experimental controls (observation ablations, severity visibility, scoring
-  scheme).
+- **Dashboard**: a Live map-led atlas, ordered event rail and visual-only
+  playback; per-nation model setup with a searchable OpenRouter catalog; nation
+  details; analytics charts (escalation over time, severity stacks, cumulative
+  scores, global stability, spikes); CSV/JSON exports; and a replay scrubber
+  with an in-app separate-run confirmation. Event links are illustrative only:
+  no routes, unit movement, territory changes, or geographic distances are
+  simulated.
+
+## Atlas data
+
+The Live atlas renders the supplied Natural Earth Admin-0 Countries 1:50m
+dataset (version 5.1.1, WGS84, public domain). This bundle contains 242 polygon
+features. Its default de-facto boundary depiction is retained as a cartographic
+reference, not as a statement about recognition or sovereignty.
+
+The checked-in runtime asset is
+`packages/ui/public/atlas/aurelia-atlas.topo.json`. It contains the geometry,
+opaque hashed region IDs, unique fictional aliases, geographic continent labels,
+active/neutral metadata, and visual anchors for the eight active agents. The
+offline converter drops all source attributes, including real names, political
+codes, population, and GDP; raw `.shp` and `.dbf` files are not loaded by the
+browser or normal application runtime. Eight features are mapped one-to-one to
+Amber, Cobalt, Crimson, Ivory, Jade, Mauve, Onyx, and Saffron; the other 234 are
+neutral scenery without simulation state.
+
+To regenerate the derivative after placing the pinned source bundle in
+`ne_50m_admin_0_countries/` at the repository root:
+
+```bash
+npm run build:atlas --workspace @aiww/ui
+```
+
+The script checks the source version and feature count, alias and ID uniqueness,
+active-region anchors, and the runtime-property allowlist. Normal UI builds use
+the generated local asset and do not need the shapefile converter.
 
 ## Architecture (monorepo)
 
@@ -127,6 +159,7 @@ schemas.
 | Document | Contents |
 |---|---|
 | `docs/ARCHITECTURE.md` | Components, per-turn data flow, determinism, persistence |
+| `docs/FRONTEND.md` | Dashboard UI, sanitized atlas data pipeline, event semantics, views, styling, recipes |
 | `docs/API.md` | HTTP endpoints, statuses, phases |
 | `docs/CONFIGURATION.md` | `SimulationConfig` fields, bounds, catalog parameters, `.env` |
 | `docs/PROMPTS.md` | Versioned prompt templates and placeholder contract |
@@ -136,9 +169,11 @@ schemas.
 
 ## Safety boundaries
 
-- Fictional countries/geography only; no connections to real governments,
-  military systems, weapons, infrastructure, financial accounts, or operational
-  cyber tooling.
+- Fictional nation identities, scenarios, actions, resources, and events. Atlas
+  polygons are Earth-derived visual references under fictional aliases; they
+  do not represent simulation ownership or changing borders. There are no
+  connections to real governments, military systems, weapons, infrastructure,
+  financial accounts, or operational cyber tooling.
 - Model output can never execute code or mutate state outside the validated
   engine; URLs, shell syntax, and operational content are rejected at
   validation in action ids and messages (rationale text is length-capped only).
@@ -158,7 +193,9 @@ Turn counts, action limits, observation ablations, scoring scheme, stop
 conditions, passive mechanics, seeds, and models are exposed through
 `SimulationConfig` and documented in `docs/CONFIGURATION.md`. A few server-side
 choices are hard-coded (narrator/repair sampling, content-scan scope) and are
-called out in that document.
+called out in that document. New runs default to the versioned
+`aurelia_world_8_v2` fiction pack; the unchanged `baseline_8` pack remains
+available for saved configurations and replay compatibility.
 
 ## Known limitations
 

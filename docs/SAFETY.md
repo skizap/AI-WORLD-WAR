@@ -1,20 +1,22 @@
 # Safety boundaries and threat model
 
-RESEARCH SIMULATION — fictional nations only. Not a forecasting or
+RESEARCH SIMULATION — fictional nation identities and events, with Earth-derived
+boundary geometry used only as a cartographic reference. Not a forecasting or
 decision-support system.
 
 ## Hard boundaries
 
-1. **Fictional-only content.** Eight invented nations (Amber, Cobalt, Crimson,
-   Ivory, Jade, Mauve, Onyx, Saffron) on the invented continent of Aurelia,
-   with synthetic resources. All nations, scenarios, and events ship as
-   hardcoded fictional data. There is no scenario editor; client requests can
-   only reference the built-in scenario ids, and no scenario content can be
-   supplied. Note: `SimulationConfig.safetyMode` (`fictional_only`
-   default, `educational_fictionalization` alternative) is declared but **not
-   enforced by any code path yet** — both values currently behave identically,
-   and no code rejects real-world country names; the engine simply accepts only
-   the built-in fictional nation ids and the cataloged action ids.
+1. **Fictional identities and simulation content.** The eight active agents
+   (Amber, Cobalt, Crimson, Ivory, Jade, Mauve, Onyx, Saffron), scenarios,
+   actions, resources, state variables, and outcomes are fictional. There is no
+   scenario editor; requests can only reference built-in scenario IDs. The Live
+   atlas is the exception to an all-fictional-geography claim: it renders
+   Earth-derived polygons with fictional aliases. Those polygons are visual
+   references only and never define simulation ownership, action reach, or
+   changing territory. `SimulationConfig.safetyMode` (`fictional_only` default,
+   `educational_fictionalization` alternative) is declared but **not enforced**;
+   no code rejects real-world names in free text, while engine actions accept
+   only built-in fictional nation IDs and cataloged action IDs.
 2. **No operational modeling.** Cyber, military, and nuclear actions are
    abstract resource-and-relationship deltas. No vulnerabilities, targets,
    procedures, weapon effects, or tactics are described anywhere in prompts,
@@ -35,10 +37,37 @@ decision-support system.
    exported, or included in audit/telemetry records. Health checks report
    booleans, never key material.
 7. **Honest labeling.** Metrics are called *simulation scores*, *escalation
-   proxies*, and *observed run behavior*. The UI carries a persistent notice:
-   "RESEARCH SIMULATION with FICTIONAL nations. This is not a forecasting or
-   decision-support system, and simulation scores are not predictions about the
-   real world."
+   proxies*, and *observed run behavior*. The UI carries a persistent notice
+   that identities, actions, and outcomes are fictional, and that the atlas
+   boundaries are Earth-derived reference geometry rather than real-world
+   actors or changing territory.
+
+## Atlas data provenance
+
+The local derivative is built from Natural Earth Admin-0 Countries 1:50m,
+version 5.1.1, WGS84, public domain. The supplied bundle contains 242 polygon
+features and 168 DBF fields. Its default de-facto boundary depiction is retained
+for recognizable reference geometry only; it is not a recognition or
+sovereignty claim.
+
+`npm run build:atlas --workspace @aiww/ui` reads the source bundle from
+`ne_50m_admin_0_countries/` and writes
+`packages/ui/public/atlas/aurelia-atlas.topo.json`. The converter uses a
+version-locked local toolchain, hashes the source feature key into an opaque
+region ID, creates unique fictional aliases, and allowlists only geometry,
+alias, the geographic continent label, active/neutral metadata, and eight visual
+anchors. All source names, political identifiers, population/GDP fields, and
+other unapproved DBF attributes are dropped. The browser loads only this
+sanitized local TopoJSON; it never loads raw shapefiles, remote map tiles, or
+external geography services.
+
+The map uses existing fiction-pack IDs for the eight active features. Its
+neutral features are scenery only. Existing synthetic `mapPosition` and
+`distances` remain unrelated to this map; neither simulation distances nor
+influence, ownership, actor behavior, routes, or unit movement are derived from
+physical geometry. New runs use the versioned `aurelia_world_8_v2` profile
+wording, while the original `baseline_8` content remains available for recorded
+run compatibility.
 
 ## Threat model (research-tool scope)
 
@@ -53,7 +82,10 @@ decision-support system.
   configured key is rejected at creation, and mid-run provider failures become
   explicit missing decisions for that nation/turn.
 - **Accidental real-world reuse**: mitigated by persistent fiction notices,
-  documentation, and the absence of any real-world data or connectors.
+  documentation, fictional aliases, removal of source country names and IDs
+  from the browser asset, and the absence of live real-world connectors. The
+  Earth-derived boundary geometry remains recognizable and must continue to be
+  labeled as reference-only.
 
 ## Known gaps (tracked honestly)
 

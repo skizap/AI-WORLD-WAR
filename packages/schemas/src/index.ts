@@ -405,7 +405,7 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = {
   name: 'Paper-inspired baseline',
   seed: 'aiww-0',
   scenarioId: 'neutral',
-  fictionPackId: 'baseline_8',
+  fictionPackId: 'aurelia_world_8_v2',
   totalTurns: 14,
   provider: 'mock',
   models: {

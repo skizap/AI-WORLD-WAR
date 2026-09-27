@@ -20,7 +20,7 @@ export {
   type AppliedChanges,
 } from './engine.js';
 export { BASELINE_CATALOG, CATALOG_BY_ID } from '../data/catalog.js';
-export { BASELINE_PACK, ALL_PACKS, getPack } from '../data/nations.js';
+export { BASELINE_PACK, AURELIA_WORLD_PACK_V2, ALL_PACKS, getPack } from '../data/nations.js';
 export {
   ALL_SCENARIOS,
   NEUTRAL_SCENARIO,
