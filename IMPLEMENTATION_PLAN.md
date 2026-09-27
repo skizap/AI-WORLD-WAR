@@ -22,12 +22,12 @@ RESEARCH SIMULATION — fictional nations only. Not a forecasting or decision-su
    - 27-action catalog (declarative data registry, versioned) with severity, preconditions, effects
    - 3 baseline scenarios (neutral / prior invasion / prior cyber incident)
    - Seeded RNG, bounded variables + clamping, relationship engine, passive mechanics
-   - Turn loop with documented resolution order, human-approval gate hooks
+   - Autonomous turn loop with documented resolution order and Start/Stop lifecycle
    - Escalation scoring schemes (default 2^x−4 ladder, linear, exponential, firebreak, custom)
    - Metrics computation, deterministic seeded mock agents + deterministic narrator fallback
 4. [x] `packages/prompts` — versioned prompt template files (nation agent system, observation, narrator, repair)
 5. [x] `packages/server` — Fastify API, SQLite persistence, simulation job lifecycle
-   (start/pause/resume/step/stop/approve/reject), batch experiment runner,
+   (start/stop), per-nation OpenRouter routing, provider-aware batch experiment runner,
    OpenRouterClient (retries/backoff/rate limits/token accounting/catalog caching/capability fallback)
 6. [x] `packages/ui` — dashboard: setup, live simulation, nation detail, analytics, replay
 7. [x] Docs: README, ARCHITECTURE, SAFETY, RESEARCH_NOTES, CONFIGURATION, API, PROMPTS, LIMITATIONS

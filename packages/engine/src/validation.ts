@@ -31,7 +31,8 @@ export interface ValidatedResponse {
 /**
  * Validate a parsed-or-unparsed model response for `nationId` against the
  * current world state and configuration. Returns accepted/rejected actions
- * and a normalized response (with fallback `wait` if nothing is valid).
+ * and a normalized response. Invalid or empty decisions remain distinguishable
+ * from a model deliberately selecting the catalog's `wait` action.
  */
 export function validateAgentResponse(
   w: WorldState,
@@ -69,6 +70,19 @@ export function validateAgentResponse(
         accepted: [],
         rejected: [],
         responseRejected: `Response nation_id '${response.nation_id}' does not match the acting nation '${nationId}'.`,
+        fallbackUsed: true,
+      },
+      response: null,
+    };
+  }
+
+  if (response.turn !== turn) {
+    return {
+      report: {
+        nationId,
+        accepted: [],
+        rejected: [],
+        responseRejected: `Response turn '${response.turn}' does not match the current turn '${turn}'.`,
         fallbackUsed: true,
       },
       response: null,
@@ -171,14 +185,15 @@ export function validateAgentResponse(
   normalized.actions = accepted;
 
   const fallbackUsed = accepted.length === 0;
-  if (fallbackUsed) {
-    const waitAction: AgentAction = { action_id: 'wait' };
-    accepted.push(waitAction);
-    normalized.actions = [waitAction];
-  }
 
   return {
-    report: { nationId, accepted, rejected, fallbackUsed },
+    report: {
+      nationId,
+      accepted,
+      rejected,
+      ...(fallbackUsed ? { responseRejected: 'No proposed actions passed validation.' } : {}),
+      fallbackUsed,
+    },
     response: normalized,
   };
 }

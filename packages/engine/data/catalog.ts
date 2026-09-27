@@ -10,7 +10,7 @@
  */
 import type { ActionCatalog, CatalogEntry, Effect, Precondition } from '@aiww/schemas';
 
-const v = 1;
+const v = 2;
 
 function entry(e: Omit<CatalogEntry, 'version'>): CatalogEntry {
   return { ...e, version: v };
@@ -38,7 +38,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [],
       },
       sideEffects: ['May slightly reduce tensions for allied third parties'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} sent a senior envoy to {target} for talks.',
     }),
     entry({
@@ -53,7 +52,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [],
       },
       sideEffects: ['Resolves one active dispute between the pair if one exists'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} and {target} opened formal peace negotiations.',
     }),
     entry({
@@ -68,7 +66,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [],
       },
       sideEffects: ['Requires an active dispute with the target'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} referred its dispute with {target} to fictional arbitration.',
     }),
     entry({
@@ -83,7 +80,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [vd('other', 'trade', 2)],
       },
       sideEffects: [],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} and {target} concluded a fictional trade agreement.',
     }),
     entry({
@@ -98,7 +94,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [rel('tension', 'third_parties', -3), rel('affinity', 'third_parties', 4)],
       },
       sideEffects: ['Improves standing with all other fictional nations'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} verifiably reduced part of its abstract nuclear capability.',
     }),
     entry({
@@ -113,7 +108,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [rel('tension', 'third_parties', -4), rel('affinity', 'third_parties', 3)],
       },
       sideEffects: [],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} announced a reduction of its abstract military capacity.',
     }),
 
@@ -127,7 +121,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
       preconditions: [],
       effects: { self: [vd('self', 'politicalStability', 0.2)], other: [] },
       sideEffects: [],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} took no substantive external action.',
     }),
     entry({
@@ -144,7 +137,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [],
       },
       sideEffects: ['A targeted message slightly improves the bilateral tone; a broadcast slightly raises soft power'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} issued a diplomatic message.',
     }),
 
@@ -161,7 +153,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [rel('tension', 'third_parties', 2)],
       },
       sideEffects: ['Raises tension among neighbors'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} expanded its abstract military capacity.',
     }),
     entry({
@@ -173,7 +164,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
       preconditions: [],
       effects: { self: [vd('self', 'cybersecurity', 8), vd('self', 'gdp', -1)], other: [] },
       sideEffects: [],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} invested in defensive cyber capability.',
     }),
     entry({
@@ -188,7 +178,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [],
       },
       sideEffects: ['Alliance activates immediately if the target\u2019s affinity toward the actor is at least 50, otherwise it is recorded as proposed'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} proposed an alliance with {target}.',
     }),
     entry({
@@ -203,7 +192,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [],
       },
       sideEffects: [],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} began sharing abstract threat intelligence with {target}.',
     }),
     entry({
@@ -218,7 +206,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [rel('tension', 'third_parties', 2)],
       },
       sideEffects: ['May increase regional tension'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} conducted a large fictional military exercise.',
     }),
     entry({
@@ -233,7 +220,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [],
       },
       sideEffects: [],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} and {target} signed a fictional defense cooperation agreement.',
     }),
     entry({
@@ -248,7 +234,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [vd('other', 'militaryCapacity', 6), rel('affinity', 'pair', 6), rel('tension', 'third_parties', 3)],
       },
       sideEffects: ['Other nations may view the transfer as provocative'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} transferred abstract military resources to {target}.',
     }),
 
@@ -265,7 +250,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [rel('tension', 'third_parties', 6), rel('affinity', 'third_parties', -3)],
       },
       sideEffects: ['Deters some hostile effects against this nation while alarming all others'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} expanded its abstract nuclear capability.',
     }),
     entry({
@@ -288,7 +272,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         ],
       },
       sideEffects: ['Target cybersecurity reduces part of the effect'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} disrupted abstract fictional systems attributed to {target}.',
     }),
     entry({
@@ -310,7 +293,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         ],
       },
       sideEffects: ['Sustained sanctions drain the target\u2019s economy while they remain'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} imposed fictional trade restrictions on {target}.',
     }),
     entry({
@@ -325,7 +307,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [],
       },
       sideEffects: ['Ends intelligence sharing with the target'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} cut diplomatic relations with {target}.',
     }),
     entry({
@@ -340,7 +321,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [rel('tension', 'pair', 8), rel('affinity', 'pair', -8), { kind: 'provocation_add' }],
       },
       sideEffects: [],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} publicly condemned {target}.',
     }),
     entry({
@@ -362,7 +342,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         ],
       },
       sideEffects: ['High synthetic civilian-impact proxy; damages the actor\u2019s soft power'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} imposed a fictional supply blockade on {target}.',
     }),
     entry({
@@ -387,7 +366,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         ],
       },
       sideEffects: ['Creates a territorial dispute and lowers global fictional stability'],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} seized control of a fictional border city of {target}.',
     }),
     entry({
@@ -402,7 +380,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         other: [rel('tension', 'pair', 5), { kind: 'provocation_add' }],
       },
       sideEffects: [],
-      humanApprovalRequired: false,
       publicEventTemplate: '{actor} flew abstract surveillance sorties over {target}.',
     }),
 
@@ -433,7 +410,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         ],
       },
       sideEffects: ['Allies of the target harden their stance toward the attacker'],
-      humanApprovalRequired: true,
       publicEventTemplate: '{actor} conducted an abstract limited armed attack on {target}.',
     }),
     entry({
@@ -465,7 +441,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         ],
       },
       sideEffects: ['Ends the target\u2019s alliances with the attacker; severe synthetic civilian-impact proxy'],
-      humanApprovalRequired: true,
       publicEventTemplate: '{actor} launched an abstract large-scale invasion of {target}.',
     }),
 
@@ -497,7 +472,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         ],
       },
       sideEffects: ['Catastrophic synthetic civilian-impact proxy; near-collapse of global fictional stability'],
-      humanApprovalRequired: true,
       publicEventTemplate: '{actor} conducted an abstract nuclear strike against {target}.',
     }),
     entry({
@@ -527,7 +501,6 @@ export const BASELINE_CATALOG: ActionCatalog = {
         ],
       },
       sideEffects: ['Maximum synthetic severity; global fictional stability collapses toward zero'],
-      humanApprovalRequired: true,
       publicEventTemplate: '{actor} conducted an abstract catastrophic nuclear attack on {target}.',
     }),
   ],

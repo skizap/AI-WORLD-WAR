@@ -19,12 +19,11 @@ returns the standing fiction notice.
 - `GET /simulations` — list with id/status/turn/scenario/provider/model.
 - `GET /simulations/:id` — status, phase, stopReason, full world state, config.
 - `GET /simulations/:id/state` — `{ turn, status, world }`.
-- `POST /simulations/:id/start|pause|resume|stop|cancel|step`.
+- `POST /simulations/:id/start|stop`.
 - `GET /simulations/:id/events?fromTurn=N` — validated event stream.
 - `GET /simulations/:id/nations/:nid` — profile, variable history (per turn),
   current state, action history with rationales and rejection reasons, metrics.
 - `GET /simulations/:id/metrics` — `RunMetrics` (turns, spikes, totals, rates).
-- `POST /simulations/:id/approvals/:key` — body `{ approve: boolean }`.
 - `GET /simulations/:id/replay?turn=N` — before/after snapshots, event trace,
   narrator summary, and the exact `reRunConfig`.
 - `GET /simulations/:id/export?format=csv|json` — CSV metrics or full JSON run
@@ -42,5 +41,4 @@ returns the standing fiction notice.
 
 ## Simulation statuses
 
-`idle → running ⇄ paused`, `running ⇄ awaiting_approval`, terminal:
-`completed | stopped | failed`.
+`idle → running`, terminal: `completed | stopped | failed`.

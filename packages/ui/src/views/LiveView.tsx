@@ -33,7 +33,7 @@ export function LiveView({ simId, onPick }: { simId: string | null; onPick: (id:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [simId]);
 
-  const control = async (action: 'start' | 'pause' | 'resume' | 'stop' | 'step') => {
+  const control = async (action: 'start' | 'stop') => {
     if (!simId) return;
     try {
       await api.control(simId, action);
@@ -45,7 +45,6 @@ export function LiveView({ simId, onPick }: { simId: string | null; onPick: (id:
 
   const nations = useMemo(() => Object.values(world?.nations ?? {}), [world]);
   const recentEvents = (world?.events ?? []).slice(-40).reverse();
-  const pending = (world?.pendingApprovals ?? []).filter((p) => p.status === 'pending');
   const turn = world?.turn ?? 0;
   const total = world?.totalTurns ?? 1;
 
@@ -62,11 +61,8 @@ export function LiveView({ simId, onPick }: { simId: string | null; onPick: (id:
               ))}
             </select>
           </label>
-          <button onClick={() => control('start')} disabled={!simId}>Start</button>
-          <button onClick={() => control('pause')} disabled={!simId}>Pause</button>
-          <button onClick={() => control('resume')} disabled={!simId}>Resume</button>
-          <button onClick={() => control('step')} disabled={!simId}>Step</button>
-          <button onClick={() => control('stop')} disabled={!simId}>Stop</button>
+          <button onClick={() => control('start')} disabled={!simId || status !== 'idle'}>Start</button>
+          <button onClick={() => control('stop')} disabled={!simId || status !== 'running'}>Stop</button>
           <span className="muted" aria-live="polite">status: {status || '—'} · phase: {phase || '—'}</span>
         </div>
         <div className="progress" role="progressbar" aria-valuenow={turn} aria-valuemin={0} aria-valuemax={total} aria-label="Simulation progress">
@@ -76,22 +72,7 @@ export function LiveView({ simId, onPick }: { simId: string | null; onPick: (id:
         {error && <p role="alert" className="notice">{error}</p>}
       </section>
 
-      <section className="panel" aria-labelledby="pending-approvals">
-        <h2 id="pending-approvals">Pending approvals ({pending.length})</h2>
-        {pending.length === 0 && <p className="muted">No severe actions awaiting human approval.</p>}
-        {pending.map((p) => (
-          <div className="approval" key={p.key}>
-            <strong>{p.nationId}</strong> proposes <strong>{p.actionId}</strong>
-            {p.targetId ? ` against ${p.targetId}` : ''}{' '}
-            <span className="badge severe">{p.severity.replace(/_/g, ' ')}</span>
-            {p.message && <p className="muted">“{p.message}”</p>}
-            <button onClick={async () => { await api.approve(simId!, p.key, true); void refresh(simId); }}>Approve</button>{' '}
-            <button onClick={async () => { await api.approve(simId!, p.key, false); void refresh(simId); }}>Reject</button>
-          </div>
-        ))}
-      </section>
-
-      <section className="panel" aria-labelledby="event-feed">
+      <section className="panel" style={{ gridColumn: '1 / -1' }} aria-labelledby="event-feed">
         <h2 id="event-feed">Event feed</h2>
         <div className="eventfeed">
           {recentEvents.map((e) => (

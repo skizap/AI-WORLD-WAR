@@ -34,6 +34,7 @@ export { mockDecide, deterministicNarrator, type MockObservation } from './mock.
 export {
   MockAgentProvider,
   DeterministicNarratorProvider,
+  AgentDecisionError,
   behaviorFor,
   type AgentProvider,
   type NarratorProvider,

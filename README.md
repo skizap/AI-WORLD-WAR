@@ -31,9 +31,10 @@ Start the full app (server + dashboard) in **mock mode**:
 npm run dev           # API on http://127.0.0.1:8787, UI on http://localhost:5173
 ```
 
-Open the UI, complete the **safety acknowledgment**, pick a scenario and seed,
-and launch a simulation. Pause, step, approve severe actions, inspect analytics
-and replay, and export results — all offline with deterministic mock agents.
+Open the UI, pick a scenario and seed, assign one model to all nations or a
+different model to each, and launch
+an autonomous simulation. Stop it at any time, or let it finish and inspect the
+analytics, replay, and exports. Mock mode is deterministic and fully offline.
 
 ## Running real models via OpenRouter
 
@@ -51,9 +52,10 @@ curl http://127.0.0.1:8787/api/openrouter/health     # connectivity check (never
 curl http://127.0.0.1:8787/api/openrouter/models     # model catalog (context length + pricing)
 ```
 
-Model slugs are configurable per role (`nation_agent`, `world_narrator`,
-`repair`) via `.env` and per-simulation in the UI — nothing is hard-coded in
-business logic. All production calls go through the OpenRouter REST gateway
+Environment model slugs are startup defaults. In the UI, each of the eight
+nations can be assigned a different OpenRouter model, with separate world-
+narrator and repair models. The effective model is recorded with every
+decision. All production calls go through the OpenRouter REST gateway
 (`POST /chat/completions`, `GET /models`). If OpenRouter is unavailable the app
 **surfaces the failure** and lets you switch explicitly to mock mode; it never
 silently substitutes mock for a production run.
@@ -86,20 +88,23 @@ npm run dev       # development: API on :8787 + Vite dev server on :5173
   second-order effects. Same seed + config => byte-identical replay.
 - **Three baseline scenarios**: neutral, prior invasion, prior cyber incident
   (all fictional and abstract).
-- **Human approval gate** for severe actions (violent/nuclear by default) with
-  a full audit trail of overrides.
+- **Autonomous resolution**: every validated action, including violent and
+  nuclear actions, resolves without human intervention. The normal controls are
+  Start and Stop.
 - **World narrator** (LLM or deterministic fallback) summarizes each turn from
-  validated engine deltas — the engine stays authoritative.
+  validated engine deltas. It is display-only by default, so prose does not
+  influence later decisions unless that experimental ablation is enabled.
 - **Escalation metrics**: simulation scores / escalation proxies per the
   paper's ladder (`2^x - 4`), plus linear, exponential, firebreak, and custom
   schemes. Descriptive only — never called predictions or risk probabilities.
 - **Batch experiments** across seeds x models x scenarios x replicates with
   bootstrap-CI aggregates and full provenance (config hash, code version,
-  prompt version, model slug, seed).
-- **Dashboard**: setup with safety acknowledgment, live simulation view,
+  prompt version, effective model slug, seed). Mock and OpenRouter jobs use
+  their requested provider; they are never silently substituted.
+- **Dashboard**: per-nation model setup, autonomous live simulation view,
   nation detail, analytics charts (escalation over time, severity stacks,
-  resource trajectories, relationship heatmap), and a replay scrubber with
-  deterministic re-run.
+  cumulative scores, global stability), exports, and a replay scrubber with
+  deterministic mock re-run.
 
 ## Architecture (monorepo)
 

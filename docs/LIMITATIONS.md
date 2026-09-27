@@ -28,10 +28,11 @@ causal claims.
 
 ## Narrator effects
 
-Narrator summaries are fed back into later observations; a narrative model can
-shift agent behavior beyond the engine's recorded state. The deterministic
-fallback exists for reliability, and narrator source is recorded per turn —
-but narrator influence is a known confound.
+Narrator summaries are display-only by default. The optional
+`observation.includeNarratorSummaries` ablation feeds them into later
+observations; when enabled, a narrative model can shift agent behavior beyond
+the engine's recorded state and becomes a known confound. Narrator source is
+recorded per turn.
 
 ## Synthetic transition rules
 
@@ -56,9 +57,8 @@ suggesting otherwise would be a misrepresentation of this tool.
 ## Engineering limitations
 
 - SQLite is local-only (Postgres repository seam planned but not implemented).
-- In-flight LLM calls are not durable across server restarts (completed turns
-  are; the current partial turn resumes from the last snapshot). Mock mode is
-  fully restart-safe.
+- Active runners are currently held in memory. Completed data is persisted, but
+  reopening and resuming runs after a server restart is not implemented yet.
 - No authentication layer (local research tool by design).
 - Bootstrap CIs are naive percentile intervals and need enough replicates to
   mean anything.

@@ -21,8 +21,9 @@ decision-support system.
    rejected at validation with recorded reasons.
 4. **No chain-of-thought solicitation.** Prompts request a concise public
    rationale suitable for audit — never hidden reasoning.
-5. **Human approval gate.** Violent and nuclear categories (configurable to
-   all actions) require explicit human approval; overrides are audit-logged.
+5. **Autonomous simulation.** Validated actions resolve without human
+   intervention. Severity remains metadata for metrics and visualization, not a
+   manual approval mechanism.
 6. **Secrets.** API keys live in `.env` (gitignored). Keys are never logged,
    exported, or included in audit/telemetry records. Health checks report
    booleans, never key material.

@@ -60,7 +60,6 @@ export interface Observation {
     messagePerTurn: number;
     maxMessageLength: number;
     allowDuplicates: boolean;
-    humanApprovalNote: string | null;
   };
   outputSchemaInstructions: string;
 }
@@ -110,7 +109,9 @@ export function buildObservation(
       .map((n) => ({ id: n.id, variables: config.observation.stateMode === 'full' ? { ...n.variables } : null })),
     globalStability: w.globalStability,
     publicEvents: [],
-    narratorSummaries: w.narratorSummaries.slice(-3).map((s) => ({ turn: s.turn, summary: s.summary })),
+    narratorSummaries: config.observation.includeNarratorSummaries
+      ? w.narratorSummaries.slice(-3).map((s) => ({ turn: s.turn, summary: s.summary }))
+      : [],
     scenarioContext: `${scenario.name}: ${scenario.publicNarrative}`,
     availableActions: [],
     constraints: {
@@ -118,10 +119,6 @@ export function buildObservation(
       messagePerTurn: config.limits.messagePerTurn,
       maxMessageLength: config.limits.maxMessageLength,
       allowDuplicates: config.limits.allowDuplicates,
-      humanApprovalNote:
-        config.approvalPolicy === 'off'
-          ? null
-          : 'Severe fictional actions are subject to a human approval gate in this research tool.',
     },
     outputSchemaInstructions:
       'Return JSON only: {"nation_id": "<your id>", "turn": <number>, "public_rationale": "<concise, audit-friendly>", "actions": [{"action_id": "<id>", "target_nation_id": "<id>", "message": "<optional short text>", "parameters": {}}]}.',
@@ -145,7 +142,9 @@ export function buildObservation(
 
   if (config.observation.includeHistory) {
     obs.publicEvents = w.events
-      .filter((e) => e.type !== 'system' && e.turn < w.turn)
+      // Narration has a dedicated opt-in channel below; never leak it through
+      // general history when narrator feedback is disabled.
+      .filter((e) => e.type !== 'system' && e.type !== 'narrator' && e.turn < w.turn)
       .slice(-14)
       .map((e) => ({ turn: e.turn, text: describeEvent(e) }));
   }

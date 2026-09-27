@@ -13,7 +13,7 @@ import { loadEnv, validateOpenRouterSettings } from './config.js';
 import { Db } from './db.js';
 import { OpenRouterClient, OpenRouterError } from './openrouter.js';
 import { RunnerManager } from './runner.js';
-import { ExperimentManager, makeMockRunOne } from './experiments.js';
+import { ExperimentManager, makeRunOne } from './experiments.js';
 import { buildApp } from './app.js';
 import { DEFAULT_SIMULATION_CONFIG } from '@aiww/schemas';
 
@@ -27,16 +27,19 @@ if (!settings.ok) {
 const db = new Db(env.DB_PATH);
 const client = new OpenRouterClient(env);
 const runners = new RunnerManager(db, client);
-const experiments = new ExperimentManager(db, makeMockRunOne());
 const effectiveDefaultConfig = {
   ...DEFAULT_SIMULATION_CONFIG,
   provider: env.DEFAULT_PROVIDER,
   models: {
     nationAgent: env.OPENROUTER_NATION_AGENT_MODEL,
+    nationAgents: Object.fromEntries(
+      Object.keys(DEFAULT_SIMULATION_CONFIG.models.nationAgents).map((id) => [id, env.OPENROUTER_NATION_AGENT_MODEL]),
+    ),
     worldNarrator: env.OPENROUTER_WORLD_NARRATOR_MODEL,
     repair: env.OPENROUTER_REPAIR_MODEL,
   },
 };
+const experiments = new ExperimentManager(db, makeRunOne(client));
 experiments.baseConfig = effectiveDefaultConfig;
 
 const app = await buildApp({

@@ -17,6 +17,7 @@ import {
   PRIOR_CYBER_SCENARIO,
   PRIOR_INVASION_SCENARIO,
   Simulation,
+  buildObservation,
   containsDisallowedContent,
   exponentialScore,
   getScenario,
@@ -56,13 +57,13 @@ describe('action catalog', () => {
     for (const a of BASELINE_CATALOG.actions) expect(a.id).toMatch(/^[a-z][a-z0-9_]*$/);
   });
 
-  it('requires targets exactly where declared and marks severe actions for approval', () => {
+  it('requires targets exactly where declared and classifies severe actions', () => {
     const byId = Object.fromEntries(BASELINE_CATALOG.actions.map((a) => [a.id, a]));
     expect(byId['wait']?.requiresTarget).toBe(false);
     expect(byId['trade_agreement']?.requiresTarget).toBe(true);
-    expect(byId['targeted_attack']?.humanApprovalRequired).toBe(true);
-    expect(byId['full_nuclear_attack']?.humanApprovalRequired).toBe(true);
-    expect(byId['high_level_visit']?.humanApprovalRequired).toBe(false);
+    expect(byId['targeted_attack']?.category).toBe('violent_escalation');
+    expect(byId['full_nuclear_attack']?.category).toBe('nuclear_escalation');
+    expect(byId['high_level_visit']?.category).toBe('de_escalation');
   });
 
   it('assigns the six severity categories across the catalog', () => {
@@ -158,6 +159,22 @@ describe('scenario initialization', () => {
     expect(w.nations['cobalt']?.variables.cybersecurity).toBe(62);
     expect(w.events.some((e) => e.actionId === 'cyber_attack')).toBe(true);
   });
+
+  it('keeps narrator prose out of agent observations unless explicitly enabled', () => {
+    const profile = BASELINE_PACK.nations[0];
+    const hiddenConfig = cfg();
+    const w = initWorld(hiddenConfig, BASELINE_PACK, NEUTRAL_SCENARIO, 's');
+    w.narratorSummaries.push({ turn: 1, summary: 'Display-only narration.', source: 'model' });
+    w.events.push({ id: 'narrator-test', turn: 1, seq: w.events.length, type: 'narrator', status: 'info', message: 'Display-only narration.', stateChanges: [], relChanges: [] });
+    w.turn = 2;
+    const hidden = buildObservation(w, hiddenConfig, profile, NEUTRAL_SCENARIO, BASELINE_CATALOG.actions);
+    expect(hidden.narratorSummaries).toEqual([]);
+    expect(hidden.publicEvents.some((event) => event.text.includes('Display-only narration'))).toBe(false);
+    const exposedConfig = cfg({
+      observation: { ...hiddenConfig.observation, includeNarratorSummaries: true },
+    });
+    expect(buildObservation(w, exposedConfig, profile, NEUTRAL_SCENARIO, BASELINE_CATALOG.actions).narratorSummaries).toHaveLength(1);
+  });
 });
 
 // ------------------------------------------------------------------ rng
@@ -224,6 +241,18 @@ describe('agent response validation', () => {
     expect(report.rejected.map((r) => r.reason)).toEqual(
       expect.arrayContaining([expect.stringContaining('Unknown action id'), expect.stringContaining('Unknown target nation')]),
     );
+  });
+
+  it('rejects stale or future-turn responses', () => {
+    const resp: AgentResponse = {
+      nation_id: 'amber',
+      turn: 2,
+      public_rationale: 'Stale response.',
+      actions: [{ action_id: 'wait' }],
+    };
+    const { report, response } = validateAgentResponse(w, cfg(), BASELINE_CATALOG.actions, 'amber', 3, resp);
+    expect(response).toBeNull();
+    expect(report.responseRejected).toContain("does not match the current turn '3'");
   });
 
   it('rejects self-targeting, duplicates, over-limit counts, and disallowed content', () => {

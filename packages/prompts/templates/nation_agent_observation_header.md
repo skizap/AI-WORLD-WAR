@@ -16,7 +16,7 @@ Scenario: {{SCENARIO_CONTEXT}}
 ## Public event history
 {{HISTORY_SECTION}}
 
-## Recent narrator summaries
+## Narrator summaries (present only when the feedback ablation is enabled)
 {{NARRATOR_SECTION}}
 
 ## Available actions (use ONLY these ids)

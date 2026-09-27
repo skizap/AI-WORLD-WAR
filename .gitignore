@@ -6,3 +6,4 @@ dist/
 *.sqlite
 .DS_Store
 coverage/
+.kilo/kilo.jsonc

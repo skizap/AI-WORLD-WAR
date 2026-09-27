@@ -21,6 +21,7 @@ import { RunnerManager } from './runner.js';
 import { ExperimentManager } from './experiments.js';
 import type { OpenRouterClient } from './openrouter.js';
 import { getPack, getScenario } from '@aiww/engine';
+import { resolveNationModel } from '@aiww/schemas';
 
 export interface AppDeps {
   db: Db;
@@ -73,7 +74,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       targetOptional: a.targetOptional ?? false,
       messageAllowed: a.messageAllowed ?? false,
       phase: a.phase,
-      humanApprovalRequired: a.humanApprovalRequired,
       severityHiddenFromAgents: a.category,
     })),
     severityTable: {
@@ -84,14 +84,29 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // ---------------------------------------------------------------- config validation
   function normalizeConfig(body: unknown): SimulationConfig {
+    const input = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+    const inputModels = input['models'] && typeof input['models'] === 'object'
+      ? input['models'] as Record<string, unknown>
+      : {};
+    const packId = typeof input['fictionPackId'] === 'string'
+      ? input['fictionPackId']
+      : effectiveDefaultConfig.fictionPackId;
+    const fallbackNationModel = typeof inputModels['nationAgent'] === 'string'
+      ? inputModels['nationAgent']
+      : effectiveDefaultConfig.models.nationAgent;
+    const nationAgents = inputModels['nationAgents'] ?? (
+      inputModels['nationAgent'] !== undefined
+        ? Object.fromEntries(getPack(packId).nations.map((nation) => [nation.id, fallbackNationModel]))
+        : effectiveDefaultConfig.models.nationAgents
+    );
     const merged = {
       ...effectiveDefaultConfig,
-      ...(body as Record<string, unknown>),
-      observation: { ...effectiveDefaultConfig.observation, ...((body as Record<string, unknown>)['observation'] as object ?? {}) },
-      limits: { ...effectiveDefaultConfig.limits, ...((body as Record<string, unknown>)['limits'] as object ?? {}) },
-      models: { ...effectiveDefaultConfig.models, ...((body as Record<string, unknown>)['models'] as object ?? {}) },
-      scoring: { ...effectiveDefaultConfig.scoring, ...((body as Record<string, unknown>)['scoring'] as object ?? {}) },
-      stopConditions: { ...effectiveDefaultConfig.stopConditions, ...((body as Record<string, unknown>)['stopConditions'] as object ?? {}) },
+      ...input,
+      observation: { ...effectiveDefaultConfig.observation, ...(input['observation'] as object ?? {}) },
+      limits: { ...effectiveDefaultConfig.limits, ...(input['limits'] as object ?? {}) },
+      models: { ...effectiveDefaultConfig.models, ...inputModels, nationAgents },
+      scoring: { ...effectiveDefaultConfig.scoring, ...(input['scoring'] as object ?? {}) },
+      stopConditions: { ...effectiveDefaultConfig.stopConditions, ...(input['stopConditions'] as object ?? {}) },
     };
     const parsed = SimulationConfig.safeParse(merged);
     if (!parsed.success) {
@@ -125,13 +140,23 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.get('/api/simulations', async () =>
-    deps.runners.list().map((r) => ({ id: r.id, status: r.status, turn: r.sim.world.turn, totalTurns: r.sim.world.totalTurns, scenarioId: r.sim.config.scenarioId, provider: r.sim.config.provider, model: r.sim.config.models.nationAgent })),
+    deps.runners.list().map((r) => ({
+      id: r.id,
+      status: r.status,
+      turn: r.sim.world.turn,
+      totalTurns: r.sim.world.totalTurns,
+      scenarioId: r.sim.config.scenarioId,
+      provider: r.sim.config.provider,
+      model: new Set(getPack(r.sim.config.fictionPackId).nations.map((nation) => resolveNationModel(r.sim.config, nation.id))).size > 1
+        ? 'mixed'
+        : resolveNationModel(r.sim.config, getPack(r.sim.config.fictionPackId).nations[0]?.id ?? ''),
+    })),
   );
 
   app.get('/api/simulations/:id', async (req, reply) => {
     const r = deps.runners.get((req.params as { id: string }).id);
     if (!r) return reply.code(404).send({ message: 'Unknown simulation' });
-    return { id: r.id, status: r.status, phase: r.sim.phase, stopReason: r.sim.stopReason, turn: r.sim.world.turn, totalTurns: r.sim.world.totalTurns, world: r.sim.world, decisions: [...Object.values(r.sim.world.nations)].map(() => undefined).filter(Boolean), config: r.sim.config };
+    return { id: r.id, status: r.status, phase: r.sim.phase, stopReason: r.sim.stopReason, turn: r.sim.world.turn, totalTurns: r.sim.world.totalTurns, world: r.sim.world, decisions: r.sim.allDecisionRecords(), config: r.sim.config };
   });
 
   app.get('/api/simulations/:id/state', async (req, reply) => {
@@ -140,32 +165,19 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return { turn: r.sim.world.turn, status: r.status, world: r.sim.world };
   });
 
-  for (const action of ['start', 'pause', 'resume', 'stop', 'cancel'] as const) {
+  for (const action of ['start', 'stop'] as const) {
     app.post(`/api/simulations/:id/${action}`, async (req, reply) => {
       const r = deps.runners.get((req.params as { id: string }).id);
       if (!r) return reply.code(404).send({ message: 'Unknown simulation' });
       try {
         if (action === 'start') await r.start();
-        if (action === 'pause') r.pause();
-        if (action === 'resume') r.resume();
-        if (action === 'stop' || action === 'cancel') r.stop();
+        if (action === 'stop') r.stop();
         return { id: r.id, status: r.status };
       } catch (err) {
         return reply.code(400).send(badRequest(err instanceof Error ? err.message : String(err)));
       }
     });
   }
-
-  app.post('/api/simulations/:id/step', async (req, reply) => {
-    const r = deps.runners.get((req.params as { id: string }).id);
-    if (!r) return reply.code(404).send({ message: 'Unknown simulation' });
-    try {
-      await r.stepOnce();
-      return { id: r.id, status: r.status, turn: r.sim.world.turn, phase: r.sim.phase };
-    } catch (err) {
-      return reply.code(400).send(badRequest(err instanceof Error ? err.message : String(err)));
-    }
-  });
 
   app.get('/api/simulations/:id/events', async (req) => {
     const id = (req.params as { id: string }).id;
@@ -201,19 +213,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return r.sim.computeMetrics();
   });
 
-  app.post('/api/simulations/:id/approvals/:key', async (req, reply) => {
-    const { id, key } = req.params as { id: string; key: string };
-    const r = deps.runners.get(id);
-    if (!r) return reply.code(404).send({ message: 'Unknown simulation' });
-    const body = (req.body ?? {}) as { approve?: boolean };
-    try {
-      r.approve(key, body.approve === true);
-      return { id, key, approved: body.approve === true, status: r.status };
-    } catch (err) {
-      return reply.code(400).send(badRequest(err instanceof Error ? err.message : String(err)));
-    }
-  });
-
   app.get('/api/simulations/:id/replay', async (req, reply) => {
     const r = deps.runners.get((req.params as { id: string }).id);
     if (!r) return reply.code(404).send({ message: 'Unknown simulation' });
@@ -247,11 +246,17 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       return [header, ...lines].join('\n');
     }
     const decisions: Record<string, unknown> = {};
-    for (const d of deps.db.all<{ turn: number; nation_id: string; response_json: string; report_json: string }>(
-      `SELECT turn, nation_id, response_json, report_json FROM decisions WHERE sim_id = ?`,
+    for (const d of deps.db.all<{ turn: number; nation_id: string; response_json: string; report_json: string; provider: string; model: string; status: string }>(
+      `SELECT turn, nation_id, response_json, report_json, provider, model, status FROM decisions WHERE sim_id = ?`,
       r.id,
     )) {
-      decisions[`${d.turn}:${d.nation_id}`] = { response: JSON.parse(d.response_json), report: JSON.parse(d.report_json) };
+      decisions[`${d.turn}:${d.nation_id}`] = {
+        response: JSON.parse(d.response_json),
+        report: JSON.parse(d.report_json),
+        provider: d.provider,
+        model: d.model,
+        status: d.status,
+      };
     }
     const full = { simulationId: r.id, config: r.sim.config, world: r.sim.world, snapshots: r.sim.allSnapshots(), metrics, decisions };
     reply.header('Content-Type', 'application/json');

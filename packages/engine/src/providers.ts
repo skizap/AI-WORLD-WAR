@@ -32,6 +32,17 @@ export interface AgentProvider {
   decide(obs: Observation, ctx: AgentDecisionContext): Promise<AgentResponse>;
 }
 
+/** A provider returned output, but it could not become a valid decision. */
+export class AgentDecisionError extends Error {
+  constructor(
+    readonly kind: 'provider_failure' | 'validation_failure',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'AgentDecisionError';
+  }
+}
+
 export interface NarratorInput {
   turn: number;
   acceptedEvents: WorldEvent[];

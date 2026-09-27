@@ -3,14 +3,14 @@
  *
  * Prompts are rendered from versioned template files. Model output passes
  * through the engine's strict validation; a single deterministic repair
- * attempt uses the repair model; on failure the engine applies its safe wait
- * fallback. Raw prompts are never logged; only hashed telemetry is recorded.
+ * attempt uses the repair model. If no valid decision can be produced, the
+ * engine records a validation failure and no action for that nation/turn.
  */
 import type { AgentResponse, NarratorResponse } from '@aiww/schemas';
 import {
-  buildObservation,
   type Observation,
   type AgentProvider,
+  AgentDecisionError,
   type AgentDecisionContext,
   type NarratorProvider,
   type NarratorInput,
@@ -18,7 +18,7 @@ import {
 import { PROMPT_TEMPLATES, PROMPT_VERSION, renderTemplate } from '@aiww/prompts';
 import type { OpenRouterClient } from './openrouter.js';
 import { validateAgentResponse, repairAttempt, initWorld, BASELINE_CATALOG, getPack, getScenario } from '@aiww/engine';
-import type { SimulationConfig } from '@aiww/schemas';
+import { resolveNationModel, type SimulationConfig } from '@aiww/schemas';
 
 const LLM_TELEMETRY: ((audit: unknown) => void)[] = [];
 
@@ -111,6 +111,7 @@ export class OpenRouterAgentProvider implements AgentProvider {
   constructor(
     private readonly client: OpenRouterClient,
     private readonly config: SimulationConfig,
+    private readonly simulationId: string,
   ) {}
 
   async decide(obs: Observation, ctx: AgentDecisionContext): Promise<AgentResponse> {
@@ -122,11 +123,13 @@ export class OpenRouterAgentProvider implements AgentProvider {
       ],
       {
         role: 'nation_agent',
+        model: resolveNationModel(this.config, ctx.nationId),
         temperature: this.config.temperature,
         maxTokens: this.config.maxTokens,
-        simulationId: this.config.seed + ':' + ctx.nationId,
+        simulationId: this.simulationId,
         turn: ctx.turn,
         jsonMode: true,
+        cache: false,
       },
     );
     record(result.audit);
@@ -145,7 +148,7 @@ export class OpenRouterAgentProvider implements AgentProvider {
       ctx.turn,
       candidate,
     );
-    if (validated.response) return validated.response;
+    if (validated.response && !validated.report.fallbackUsed) return validated.response;
 
     // One repair-model attempt.
     const repair = await this.client.chat(
@@ -155,11 +158,13 @@ export class OpenRouterAgentProvider implements AgentProvider {
       ],
       {
         role: 'repair',
+        model: this.config.models.repair,
         temperature: 0,
         maxTokens: this.config.maxTokens,
-        simulationId: this.config.seed + ':' + ctx.nationId,
+        simulationId: this.simulationId,
         turn: ctx.turn,
         jsonMode: true,
+        cache: false,
       },
     );
     record(repair.audit);
@@ -172,14 +177,17 @@ export class OpenRouterAgentProvider implements AgentProvider {
       ctx.turn,
       repaired,
     );
-    if (validated2.response) return validated2.response;
-    // Final fallback: safe wait (the engine records the validation failure).
-    return { nation_id: ctx.nationId, turn: ctx.turn, public_rationale: 'Safe fallback: responses failed validation.', actions: [{ action_id: 'wait' }] };
+    if (validated2.response && !validated2.report.fallbackUsed) return validated2.response;
+    throw new AgentDecisionError('validation_failure', 'Agent output and repair output both failed validation.');
   }
 }
 
 export class OpenRouterNarratorProvider implements NarratorProvider {
-  constructor(private readonly client: OpenRouterClient) {}
+  constructor(
+    private readonly client: OpenRouterClient,
+    private readonly config: SimulationConfig,
+    private readonly simulationId: string,
+  ) {}
 
   async summarize(input: NarratorInput): Promise<NarratorResponse> {
     const system = renderTemplate(PROMPT_TEMPLATES.worldNarratorSystem, {});
@@ -195,11 +203,13 @@ export class OpenRouterNarratorProvider implements NarratorProvider {
       ],
       {
         role: 'world_narrator',
+        model: this.config.models.worldNarrator,
         temperature: 0.4,
         maxTokens: 600,
-        simulationId: input.before.simulationId,
+        simulationId: this.simulationId,
         turn: input.turn,
         jsonMode: true,
+        cache: false,
       },
     );
     record(result.audit);
@@ -251,12 +261,11 @@ function shimWorld(): WorldStateLike {
       fictionPackId: 'baseline_8',
       totalTurns: 14,
       provider: 'mock',
-      models: { nationAgent: 'x', worldNarrator: 'x', repair: 'x' },
+      models: { nationAgent: 'x', nationAgents: {}, worldNarrator: 'x', repair: 'x' },
       temperature: 0.7,
       maxTokens: 1024,
-      observation: { includeHistory: true, includeGoals: true, includeMessages: true, stateMode: 'full', severityVisibility: 'hidden', framing: 'neutral' },
+      observation: { includeHistory: true, includeGoals: true, includeMessages: true, stateMode: 'full', severityVisibility: 'hidden', framing: 'neutral', includeNarratorSummaries: false },
       limits: { nonMessagePerTurn: 3, messagePerTurn: 4, maxMessageLength: 280, maxRationaleLength: 1000, allowDuplicates: false },
-      approvalPolicy: 'off',
       scoring: { scheme: 'default' },
       narratorEnabled: true,
       passiveRulesEnabled: true,

@@ -76,6 +76,8 @@ export class Db {
         response_json TEXT NOT NULL,
         report_json TEXT NOT NULL,
         provider TEXT NOT NULL,
+        model TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'accepted',
         PRIMARY KEY (sim_id, turn, nation_id)
       );
       CREATE TABLE IF NOT EXISTS narrator (
@@ -84,16 +86,6 @@ export class Db {
         summary_json TEXT NOT NULL,
         source TEXT NOT NULL,
         PRIMARY KEY (sim_id, turn)
-      );
-      CREATE TABLE IF NOT EXISTS approvals (
-        sim_id TEXT NOT NULL,
-        key TEXT NOT NULL,
-        turn INTEGER NOT NULL,
-        nation_id TEXT NOT NULL,
-        action_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        decided_at_turn INTEGER,
-        PRIMARY KEY (sim_id, key)
       );
       CREATE TABLE IF NOT EXISTS metrics (
         sim_id TEXT NOT NULL,
@@ -137,6 +129,15 @@ export class Db {
         ts TEXT NOT NULL
       );
     `);
+    this.ensureColumn('decisions', 'model', "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn('decisions', 'status', "TEXT NOT NULL DEFAULT 'accepted'");
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!columns.some((c) => c.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 
   exec(sql: string, ...params: unknown[]): void {

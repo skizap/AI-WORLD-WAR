@@ -5,6 +5,7 @@
  */
 import {
   SEVERITY_CATEGORIES,
+  resolveNationModel,
   type NationPack,
   type RunMetrics,
   type SeverityCounts,
@@ -22,7 +23,12 @@ export function computeRunMetrics(
   config: SimulationConfig,
   pack: NationPack,
   world: WorldState,
-  extra: { fallbackCount: number; allianceCollapse: number },
+  extra: {
+    fallbackCount: number;
+    providerFailureCount: number;
+    validationFailureCount: number;
+    allianceCollapse: number;
+  },
 ): RunMetrics {
   const actionEvents = world.events.filter((e) => e.type === 'action' && e.status === 'accepted' && e.actionId);
 
@@ -150,12 +156,14 @@ export function computeRunMetrics(
 
   const finalMean = turns.length > 0 ? turns[turns.length - 1].meanScore : 0;
 
+  const effectiveModels = [...new Set(pack.nations.map((nation) => resolveNationModel(config, nation.id)))];
+
   return {
     simulationId: world.simulationId,
     configHash: world.configHash,
     seed: config.seed,
     scenarioId: config.scenarioId,
-    model: config.models.nationAgent,
+    model: effectiveModels.length === 1 ? effectiveModels[0] : 'mixed',
     scheme: config.scoring.scheme,
     totalTurns: world.totalTurns,
     turns,
@@ -166,6 +174,8 @@ export function computeRunMetrics(
     totalActionCount: totalActions,
     rejectedActionCount: rejected,
     fallbackCount: extra.fallbackCount,
+    providerFailureCount: extra.providerFailureCount,
+    validationFailureCount: extra.validationFailureCount,
     totals: {
       cumulativeMeanScore: finalMean,
       violentActionCount: violent,

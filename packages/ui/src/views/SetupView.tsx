@@ -10,19 +10,27 @@ export function SetupView({ meta, onCreated }: { meta: Meta; onCreated: (id: str
   const [totalTurns, setTotalTurns] = useState(base.totalTurns);
   const [provider, setProvider] = useState<'mock' | 'openrouter'>(base.provider);
   const [model, setModel] = useState(base.models.nationAgent);
+  const [nationModels, setNationModels] = useState<Record<string, string>>({ ...base.models.nationAgents });
+  const [narratorModel, setNarratorModel] = useState(base.models.worldNarrator);
+  const [repairModel, setRepairModel] = useState(base.models.repair);
   const [temperature, setTemperature] = useState(base.temperature);
   const [maxTokens, setMaxTokens] = useState(base.maxTokens);
-  const [approvalPolicy, setApprovalPolicy] = useState(base.approvalPolicy);
   const [scheme, setScheme] = useState(base.scoring.scheme);
   const [severityVisibility, setSeverityVisibility] = useState(base.observation.severityVisibility);
   const [includeHistory, setIncludeHistory] = useState(base.observation.includeHistory);
   const [stateMode, setStateMode] = useState<'full' | 'deltas'>(base.observation.stateMode);
   const [framing, setFraming] = useState<'neutral' | 'low_stakes'>(base.observation.framing);
   const [narratorEnabled, setNarratorEnabled] = useState(base.narratorEnabled);
-  const [ack, setAck] = useState(false);
+  const [includeNarratorSummaries, setIncludeNarratorSummaries] = useState(base.observation.includeNarratorSummaries);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<{ id: string; contextLength?: number }[] | null>(null);
+  const selectedPack = meta.packs.find((p) => p.id === packId) ?? meta.packs[0];
+
+  const applyModelToAll = (nextModel = model) => {
+    setModel(nextModel);
+    setNationModels(Object.fromEntries((selectedPack?.nations ?? []).map((nation) => [nation.id, nextModel])));
+  };
 
   const config = useMemo<SimulationConfig>(
     () => ({
@@ -32,15 +40,21 @@ export function SetupView({ meta, onCreated }: { meta: Meta; onCreated: (id: str
       seed,
       totalTurns,
       provider,
-      models: { ...base.models, nationAgent: model, worldNarrator: model, repair: model },
+      models: {
+        nationAgent: model,
+        nationAgents: Object.fromEntries(
+          (selectedPack?.nations ?? []).map((nation) => [nation.id, nationModels[nation.id] ?? model]),
+        ),
+        worldNarrator: narratorModel,
+        repair: repairModel,
+      },
       temperature,
       maxTokens,
-      approvalPolicy,
       scoring: { ...base.scoring, scheme },
-      observation: { ...base.observation, severityVisibility, includeHistory, stateMode, framing },
+      observation: { ...base.observation, severityVisibility, includeHistory, stateMode, framing, includeNarratorSummaries },
       narratorEnabled,
     }),
-    [base, scenarioId, packId, seed, totalTurns, provider, model, temperature, maxTokens, approvalPolicy, scheme, severityVisibility, includeHistory, stateMode, framing, narratorEnabled],
+    [base, scenarioId, packId, seed, totalTurns, provider, model, nationModels, narratorModel, repairModel, temperature, maxTokens, scheme, severityVisibility, includeHistory, stateMode, framing, includeNarratorSummaries, narratorEnabled, selectedPack],
   );
 
   const create = async () => {
@@ -108,9 +122,10 @@ export function SetupView({ meta, onCreated }: { meta: Meta; onCreated: (id: str
             </select>
           </label>
           <label>
-            Model slug (nation agents)
+            Default nation model
             <input value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model slug" />
           </label>
+          <button type="button" onClick={() => applyModelToAll()}>Apply to all nations</button>
           <button type="button" onClick={loadModels}>Browse catalog</button>
         </div>
         {models && (
@@ -121,7 +136,7 @@ export function SetupView({ meta, onCreated }: { meta: Meta; onCreated: (id: str
               <tbody>
                 {models.map((m) => (
                   <tr key={m.id}>
-                    <td><button type="button" onClick={() => setModel(m.id)}>{m.id}</button></td>
+                    <td><button type="button" onClick={() => applyModelToAll(m.id)}>{m.id}</button></td>
                     <td>{m.contextLength ?? '—'}</td>
                   </tr>
                 ))}
@@ -133,19 +148,28 @@ export function SetupView({ meta, onCreated }: { meta: Meta; onCreated: (id: str
           <label>Temperature <input type="number" step={0.1} min={0} max={2} value={temperature} onChange={(e) => setTemperature(Number(e.target.value))} /></label>
           <label>Max tokens <input type="number" min={64} max={32000} value={maxTokens} onChange={(e) => setMaxTokens(Number(e.target.value))} /></label>
         </div>
+        <h3>Nation model assignments</h3>
+        <div className="model-assignments">
+          {(selectedPack?.nations ?? []).map((nation) => (
+            <label key={nation.id}>
+              <span>{nation.name}</span>
+              <input
+                value={nationModels[nation.id] ?? model}
+                onChange={(e) => setNationModels((current) => ({ ...current, [nation.id]: e.target.value }))}
+                aria-label={`${nation.name} model`}
+              />
+            </label>
+          ))}
+        </div>
+        <div className="fieldrow">
+          <label>World narrator model <input value={narratorModel} onChange={(e) => setNarratorModel(e.target.value)} /></label>
+          <label>Repair model <input value={repairModel} onChange={(e) => setRepairModel(e.target.value)} /></label>
+        </div>
       </section>
 
       <section className="panel" aria-labelledby="setup-advanced">
         <h2 id="setup-advanced">Mechanics & ablations</h2>
         <div className="fieldrow">
-          <label>
-            Approval gate
-            <select value={approvalPolicy} onChange={(e) => setApprovalPolicy(e.target.value as SimulationConfig['approvalPolicy'])}>
-              <option value="off">Off</option>
-              <option value="severe">Severe actions only</option>
-              <option value="all">All actions</option>
-            </select>
-          </label>
           <label>
             Scoring scheme
             <select value={scheme} onChange={(e) => setScheme(e.target.value as SimulationConfig['scoring']['scheme'])}>
@@ -193,19 +217,17 @@ export function SetupView({ meta, onCreated }: { meta: Meta; onCreated: (id: str
           <input id="narrator-chk" type="checkbox" checked={narratorEnabled} onChange={(e) => setNarratorEnabled(e.target.checked)} />
           <label htmlFor="narrator-chk">World narrator enabled (deterministic fallback if unavailable)</label>
         </div>
+        <div className="checkbox-row">
+          <input id="narrator-feedback-chk" type="checkbox" checked={includeNarratorSummaries} onChange={(e) => setIncludeNarratorSummaries(e.target.checked)} />
+          <label htmlFor="narrator-feedback-chk">Experimental: feed narrator summaries back to nation agents</label>
+        </div>
       </section>
 
-      <section className="panel" style={{ gridColumn: '1 / -1' }} aria-labelledby="setup-safety">
-        <h2 id="setup-safety">Safety acknowledgment</h2>
-        <div className="checkbox-row">
-          <input id="ack-chk" type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
-          <label htmlFor="ack-chk">
-            I understand this is a <strong>fictional research simulation</strong>: all countries are fictional, numbers are
-            synthetic research parameters, and results are not predictions, forecasts, or decision support for the real world.
-          </label>
-        </div>
+      <section className="panel" style={{ gridColumn: '1 / -1' }} aria-labelledby="setup-launch">
+        <h2 id="setup-launch">Create autonomous simulation</h2>
+        <p className="muted">The simulation runs without action approvals. Start and Stop are available from the Live view.</p>
         {error && <p role="alert" className="notice">{error}</p>}
-        <button disabled={!ack || busy} onClick={create}>{busy ? 'Creating…' : 'Create simulation'}</button>
+        <button disabled={busy} onClick={create}>{busy ? 'Creating…' : 'Create simulation'}</button>
       </section>
     </div>
   );

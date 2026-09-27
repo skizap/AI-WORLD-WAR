@@ -38,22 +38,20 @@ RESEARCH SIMULATION — fictional nations and synthetic research parameters only
 3. **Agent provider** (mock or OpenRouter) returns strict JSON.
 4. **Validation**: schema → nation match → known action ids → target rules →
    duplicates → limits → message/content rules → parameters. Invalid items are
-   rejected with reasons; a fully invalid response gets one deterministic
-   repair attempt (mock: JSON extraction; LLM: repair model) and then a safe
-   `wait` fallback — always audited.
-5. **Approval gate**: severe actions (per policy) pause the run as
-   `awaiting_approval`; the human approves/rejects; rejections are recorded as
-   events and dropped.
-6. **Resolution** in fixed phase order (diplomatic → economic → military),
+   rejected with reasons; OpenRouter output gets one repair-model attempt. A
+   provider or validation failure becomes an explicit missing decision for that
+   nation and turn — never a fabricated `wait` choice.
+5. **Resolution** runs autonomously in fixed phase order (diplomatic → economic → military),
    by turn-order rank within each phase. Preconditions are re-checked against
    current state; failures are recorded as rejections. Effects apply through
    `applyEffects()` only — clamped, before/after recorded, audited.
-7. **Second-order reactions** (alliance solidarity, extra trust collapse).
-8. **Passive mechanics** (growth/decay/recovery/ongoing effects/alliance
+6. **Second-order reactions** (alliance solidarity, extra trust collapse).
+7. **Passive mechanics** (growth/decay/recovery/ongoing effects/alliance
    maintenance), then global clamp.
-9. **Narrator** (LLM or deterministic fallback) summarizes validated deltas;
-   a narrator failure can never corrupt state.
-10. **Snapshot + metrics** persisted; **stop conditions** evaluated.
+8. **Narrator** (LLM or deterministic fallback) summarizes validated deltas;
+   a narrator failure can never corrupt state. Narrator prose is display-only
+   by default and is fed back only in an explicit ablation.
+9. **Snapshot + metrics** persisted; **stop conditions** evaluated.
 
 ## Determinism
 
@@ -66,7 +64,7 @@ RESEARCH SIMULATION — fictional nations and synthetic research parameters only
 ## Persistence
 
 SQLite (node:sqlite) tables: `simulations`, `snapshots` (full world JSON per
-turn), `events`, `actions`, `decisions`, `narrator`, `approvals`, `metrics`,
+turn), `events`, `actions`, `decisions`, `narrator`, `metrics`,
 `llm_calls` (telemetry only — no secrets, no raw prompts), `experiments`,
 `audit`. The `Db` class is a repository-style seam; a PostgreSQL implementation
 can replace it without touching the engine.

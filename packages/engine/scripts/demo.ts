@@ -22,14 +22,7 @@ const sim = new Simulation({
 
 console.log('AI-WORLD-WAR — RESEARCH SIMULATION (fictional). Mock run starting.');
 console.log(`seed=${config.seed} scenario=${config.scenarioId} turns=${config.totalTurns}`);
-// The demo auto-approves the human-approval gate (offline mode).
-for (let i = 0; i < 100; i++) {
-  await sim.run();
-  if (sim.status !== 'awaiting_approval') break;
-  for (const p of sim.world.pendingApprovals.filter((x) => x.status === 'pending')) {
-    sim.approve(p.key, true);
-  }
-}
+await sim.run();
 console.log(`Status: ${sim.status} (stop reason: ${sim.stopReason ?? 'turn limit'})`);
 
 const metrics = sim.computeMetrics();

@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { LineChart, Line, XAxis, YAxis } from 'recharts';
 import { App } from '../src/App';
+import { api } from '../src/api';
 import { afterEach } from 'vitest';
 
 const META = {
   notice: 'RESEARCH SIMULATION with FICTIONAL nations.',
-  codeVersion: '0.1.0',
-  promptVersion: '1.0.0',
-  catalogVersion: 1,
+  codeVersion: '0.2.0',
+  promptVersion: '1.1.0',
+  catalogVersion: 2,
   defaultProvider: 'mock',
   openRouterKeyConfigured: false,
   defaultConfig: {
@@ -19,12 +20,11 @@ const META = {
     fictionPackId: 'baseline_8',
     totalTurns: 14,
     provider: 'mock',
-    models: { nationAgent: 'openai/gpt-4o-mini', worldNarrator: 'openai/gpt-4o-mini', repair: 'openai/gpt-4o-mini' },
+    models: { nationAgent: 'openai/gpt-4o-mini', nationAgents: {}, worldNarrator: 'openai/gpt-4o-mini', repair: 'openai/gpt-4o-mini' },
     temperature: 0.7,
     maxTokens: 1024,
-    observation: { includeHistory: true, includeGoals: true, includeMessages: true, stateMode: 'full', severityVisibility: 'hidden', framing: 'neutral' },
+    observation: { includeHistory: true, includeGoals: true, includeMessages: true, stateMode: 'full', severityVisibility: 'hidden', framing: 'neutral', includeNarratorSummaries: false },
     limits: { nonMessagePerTurn: 3, messagePerTurn: 4, maxMessageLength: 280, maxRationaleLength: 1000, allowDuplicates: false },
-    approvalPolicy: 'severe',
     scoring: { scheme: 'default' },
     narratorEnabled: true,
     passiveRulesEnabled: true,
@@ -32,7 +32,13 @@ const META = {
     stopConditions: { populationCollapseThreshold: 10, maxViolentActionsPerTurn: 6, globalStabilityFloor: 5 },
     safetyMode: 'fictional_only',
   },
-  packs: [{ id: 'baseline_8', name: 'Baseline Aurelia-8 (fictional)', description: 'd', nations: [] }],
+  packs: [{
+    id: 'baseline_8', name: 'Baseline Aurelia-8 (fictional)', description: 'd',
+    nations: ['amber', 'cobalt', 'crimson', 'ivory', 'jade', 'mauve', 'onyx', 'saffron'].map((id) => ({
+      id, name: id[0].toUpperCase() + id.slice(1), description: 'd', governanceType: 'democracy',
+      strategicOrientation: 'mixed', mapPosition: { x: 0, y: 0 }, goals: [],
+    })),
+  }],
   scenarios: [{ id: 'neutral', name: 'Neutral start (fictional)', description: 'd', publicNarrative: 'n', escalationBaseline: 1 }],
   actions: [],
   severityTable: { note: 'n', default: {} },
@@ -54,15 +60,32 @@ beforeEach(() => {
 });
 
 describe('UI smoke checks', () => {
-  it('renders the safety notice, tabs, and gates creation behind the acknowledgment', async () => {
+  it('does not declare JSON for bodyless simulation controls', async () => {
+    await api.control('sim-test', 'start');
+    const fetchMock = vi.mocked(fetch);
+    const [, init] = fetchMock.mock.calls.at(-1) ?? [];
+    expect(init?.method).toBe('POST');
+    expect(init?.body).toBeUndefined();
+    expect(new Headers(init?.headers).has('Content-Type')).toBe(false);
+  });
+
+  it('declares JSON when a request has a JSON body', async () => {
+    await api.createSimulation({ seed: 'header-test' });
+    const fetchMock = vi.mocked(fetch);
+    const [, init] = fetchMock.mock.calls.at(-1) ?? [];
+    expect(init?.body).toBe(JSON.stringify({ seed: 'header-test' }));
+    expect(new Headers(init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it('renders the simulation notice and creates without a blocking acknowledgment', async () => {
     render(<App />);
     await waitFor(() => screen.getByText(/RESEARCH SIMULATION with FICTIONAL nations/));
     expect(screen.getByRole('button', { name: 'Setup' })).toBeTruthy();
-    // Create button is disabled until the safety checkbox is ticked.
     const createBtn = await waitFor(() => screen.getByRole('button', { name: /Create simulation/ })) as HTMLButtonElement;
-    expect(createBtn.disabled).toBe(true);
-    fireEvent.click(screen.getAllByLabelText(/fictional research simulation/i)[0]);
     expect(createBtn.disabled).toBe(false);
+    expect(screen.getByRole('button', { name: /Apply to all nations/ })).toBeTruthy();
+    expect(screen.getByLabelText('Amber model')).toBeTruthy();
+    expect(screen.getByLabelText('Saffron model')).toBeTruthy();
   });
 
   it('renders tab navigation across all five views', async () => {

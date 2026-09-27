@@ -29,8 +29,8 @@ import {
 } from '@aiww/schemas';
 import { Rng } from './rng.js';
 
-export const CODE_VERSION = '0.1.0';
-export const PROMPT_VERSION = '1.0.0';
+export const CODE_VERSION = '0.2.0';
+export const PROMPT_VERSION = '1.1.0';
 
 /** Stable JSON stringify with sorted object keys (for hashing). */
 export function stableJson(value: unknown): string {
@@ -127,7 +127,6 @@ export function initWorld(config: SimulationConfig, pack: NationPack, scenario: 
     ongoingEffects: [],
     events: [],
     auditEvents: [],
-    pendingApprovals: [],
     narratorSummaries: [],
   };
 

@@ -51,9 +51,10 @@ nav.tabs button[aria-selected='true'] { background: var(--accent); color: #06101
 .table th, .table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .heatmap { display: grid; gap: 2px; font-size: 11px; }
 .heatmap .cell { padding: 5px 4px; text-align: center; border-radius: 4px; color: #0b1020; font-weight: 600; }
-.approval { border: 1px solid var(--danger); border-radius: 8px; padding: 10px; margin: 8px 0; background: #2a1414; }
 .fieldrow { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
 .fieldrow label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 .checkbox-row { display: flex; gap: 10px; align-items: flex-start; margin: 10px 0; font-size: 14px; }
 .stat { font-size: 24px; font-weight: 700; }
 .footer-note { margin-top: 24px; color: var(--muted); font-size: 12px; }
+.model-assignments { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; margin: 8px 0 14px; }
+.model-assignments label { display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }

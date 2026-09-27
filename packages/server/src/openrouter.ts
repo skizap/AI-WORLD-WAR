@@ -19,12 +19,16 @@ export interface ChatMessage {
 
 export interface ChatOptions {
   role: 'nation_agent' | 'world_narrator' | 'repair';
+  /** Explicit per-run model; environment values are defaults, not routing. */
+  model: string;
   temperature: number;
   maxTokens: number;
   simulationId: string;
   turn: number;
   /** Attempt structured JSON output; falls back to instructions if unsupported. */
   jsonMode?: boolean;
+  /** Deterministic utility calls may opt in; stochastic agent calls do not. */
+  cache?: boolean;
 }
 
 export interface ChatResult {
@@ -59,17 +63,6 @@ export class OpenRouterClient {
     return this.env.OPENROUTER_API_KEY.length > 0;
   }
 
-  modelFor(role: ChatOptions['role']): string {
-    switch (role) {
-      case 'nation_agent':
-        return this.env.OPENROUTER_NATION_AGENT_MODEL;
-      case 'world_narrator':
-        return this.env.OPENROUTER_WORLD_NARRATOR_MODEL;
-      case 'repair':
-        return this.env.OPENROUTER_REPAIR_MODEL;
-    }
-  }
-
   private headers(): Record<string, string> {
     return {
       Authorization: `Bearer ${this.env.OPENROUTER_API_KEY}`,
@@ -88,6 +81,7 @@ export class OpenRouterClient {
           t: opts.temperature,
           x: opts.maxTokens,
           j: opts.jsonMode && !this.jsonModeUnsupported.has(model),
+          s: opts.simulationId,
         }),
       )
       .digest('hex');
@@ -95,9 +89,9 @@ export class OpenRouterClient {
 
   /** Single chat completion with retries + backoff. Never throws raw fetch errors. */
   async chat(messages: ChatMessage[], opts: ChatOptions): Promise<ChatResult> {
-    const model = this.modelFor(opts.role);
+    const model = opts.model;
     const key = this.cacheKey(model, messages, opts);
-    const cached = this.responseCache.get(key);
+    const cached = opts.cache ? this.responseCache.get(key) : undefined;
     const now = Date.now();
     if (cached && cached.expiresAt > now) {
       return {
@@ -173,7 +167,9 @@ export class OpenRouterClient {
           status: retries > 0 ? 'ok' : 'ok',
         };
         const result: ChatResult = { content, raw: json, audit, usedFallback: false };
-        this.responseCache.set(key, { expiresAt: now + this.env.OPENROUTER_RESPONSE_CACHE_TTL_MS, result });
+        if (opts.cache) {
+          this.responseCache.set(key, { expiresAt: now + this.env.OPENROUTER_RESPONSE_CACHE_TTL_MS, result });
+        }
         return result;
       } catch (err) {
         if (err instanceof OpenRouterError) throw err;

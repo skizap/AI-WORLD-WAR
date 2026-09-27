@@ -38,11 +38,7 @@ function runMockSim(seed: string, scenarioId = 'neutral', totalTurns = 6, narrat
     narratorProvider: new DeterministicNarratorProvider(),
   });
   const loop = async () => {
-    for (let i = 0; i < 500; i++) {
-      await sim.run();
-      if (sim.status !== 'awaiting_approval') break;
-      for (const p of sim.world.pendingApprovals.filter((x) => x.status === 'pending')) sim.approve(p.key, true);
-    }
+    await sim.run();
   };
   return { sim, loop };
 }
@@ -131,11 +127,7 @@ describe('property-based invariants', () => {
         },
       },
     });
-    for (let i = 0; i < 200; i++) {
-      await sim.run();
-      if (sim.status !== 'awaiting_approval') break;
-      for (const p of sim.world.pendingApprovals.filter((x) => x.status === 'pending')) sim.approve(p.key, true);
-    }
+    await sim.run();
     expect(sim.status).toBe('completed');
     expect(sim.getFallbackStats().narratorFallbackCount).toBeGreaterThanOrEqual(0);
     // State invariants still hold.

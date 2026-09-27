@@ -4,9 +4,15 @@ import type { RunMetrics, SimulationConfig, WorldEvent, WorldState } from '@aiww
 const BASE = '/api';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  // Fastify rejects an empty request that claims to contain JSON. Only declare
+  // JSON when this request actually has a body (create/import/experiment calls).
+  if (init?.body != null && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
   const res = await fetch(BASE + path, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ message: res.statusText }));
@@ -25,7 +31,7 @@ export interface Meta {
   openRouterKeyConfigured: boolean;
   packs: { id: string; name: string; description: string; nations: { id: string; name: string; description: string; governanceType: string; strategicOrientation: string; behavior?: string; mapPosition: { x: number; y: number }; goals: string[] }[] }[];
   scenarios: { id: string; name: string; description: string; publicNarrative: string; escalationBaseline: number }[];
-  actions: { id: string; description: string; requiresTarget: boolean; targetOptional: boolean; messageAllowed: boolean; phase: string; humanApprovalRequired: boolean; severityHiddenFromAgents: string }[];
+  actions: { id: string; description: string; requiresTarget: boolean; targetOptional: boolean; messageAllowed: boolean; phase: string; severityHiddenFromAgents: string }[];
   severityTable: { note: string; default: Record<string, number> };
 }
 
@@ -39,10 +45,8 @@ export const api = {
     req<{ id: string; status: string; turn: number; totalTurns: number; scenarioId: string; provider: string; model: string }[]>('/simulations'),
   getSimulation: (id: string) =>
     req<{ id: string; status: string; phase: string; stopReason: string | null; turn: number; totalTurns: number; world: WorldState; config: SimulationConfig }>(`/simulations/${id}`),
-  control: (id: string, action: 'start' | 'pause' | 'resume' | 'stop' | 'step') =>
+  control: (id: string, action: 'start' | 'stop') =>
     req<{ id: string; status: string }>(`/simulations/${id}/${action}`, { method: 'POST' }),
-  approve: (id: string, key: string, approve: boolean) =>
-    req<{ id: string; key: string; approved: boolean; status: string }>(`/simulations/${id}/approvals/${key}`, { method: 'POST', body: JSON.stringify({ approve }) }),
   metrics: (id: string) => req<RunMetrics>(`/simulations/${id}/metrics`),
   events: (id: string, fromTurn = 0) => req<WorldEvent[]>(`/simulations/${id}/events?fromTurn=${fromTurn}`),
   nation: (id: string, nid: string) =>

@@ -1,6 +1,6 @@
 # Prompt templates (versioned)
 
-Version: **1.0.0** (`packages/prompts/src/index.ts` → `PROMPT_VERSION`, mirrored
+Version: **1.1.0** (`packages/prompts/src/index.ts` → `PROMPT_VERSION`, mirrored
 in engine `PROMPT_VERSION`). Templates are files under
 `packages/prompts/templates/` — never hard-coded into business logic.
 
@@ -21,9 +21,13 @@ visible labels).
 
 Renders the structured observation: turn/remaining, nation identity/background,
 state (full or deltas per ablation), relationship matrix, global stability,
-scenario context, filtered public history, prior narrator summaries, the
+scenario context, filtered public history, optional narrator summaries, the
 available-action list with target requirements and preconditions (no severities
 in baseline), constraints, and the exact JSON output shape.
+
+Narrator summaries are omitted from agent observations by default. The explicit
+`observation.includeNarratorSummaries` ablation includes the latest summaries
+for experiments that intentionally study narrator feedback.
 
 ## world_narrator_system.md
 

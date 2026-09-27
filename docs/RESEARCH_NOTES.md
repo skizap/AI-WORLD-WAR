@@ -33,7 +33,7 @@ changes results (see LIMITATIONS.md).
 - Declarative, versioned effect registry with clamping, ongoing effects
   (sanctions/blockade/occupation/cyber disruption), passive mechanics, and
   abstract nuclear deterrence.
-- Human-approval gate with audit trail.
+- Autonomous severe-action resolution for uninterrupted simulation runs.
 - Observation ablations (history/goals/messages/state-mode/severity-visibility/
   framing) exposed as configuration.
 - Alternative scoring schemes (linear, exponential, firebreak, custom).

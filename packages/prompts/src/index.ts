@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const PROMPT_VERSION = '1.0.0';
+export const PROMPT_VERSION = '1.1.0';
 
 const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates');
 

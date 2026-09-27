@@ -1,9 +1,10 @@
 /**
- * Simulation job lifecycle: create / start / pause / resume / step / stop /
- * approve / reject, with persistence of snapshots, events, decisions,
- * approvals, narrator summaries, metrics, audit, and LLM telemetry.
+ * Autonomous simulation lifecycle (create/start/stop) with persistence of
+ * snapshots, events, decisions, actions, narrator summaries, metrics, audit,
+ * and LLM telemetry.
  */
-import type { SimulationConfig, SimulationStatus, WorldState } from '@aiww/schemas';
+import { randomUUID } from 'node:crypto';
+import { resolveNationModel, type SimulationConfig, type SimulationStatus, type WorldState } from '@aiww/schemas';
 import {
   DeterministicNarratorProvider,
   MockAgentProvider,
@@ -16,17 +17,13 @@ import { OpenRouterAgentProvider, OpenRouterNarratorProvider, onLlmCall } from '
 import { OpenRouterClient, OpenRouterError } from './openrouter.js';
 import type { Db } from './db.js';
 
-const simIdCounter = { n: 0 };
-
 export class SimRunner {
   sim: Simulation;
-  private paused = false;
   private running = false;
   private persistedEventCount = 0;
   private persistedAuditCount = 0;
   private persistedNarratorCount = 0;
   private persistedDecisionKeys = new Set<string>();
-  private persistedApprovalKeys = new Set<string>();
 
   constructor(
     readonly id: string,
@@ -34,11 +31,12 @@ export class SimRunner {
     private readonly db: Db,
     private readonly client: OpenRouterClient | null,
   ) {
+    const simulationId = id;
     const agentProvider = config.provider === 'openrouter' && client
-      ? new OpenRouterAgentProvider(client, config)
+      ? new OpenRouterAgentProvider(client, config, simulationId)
       : new MockAgentProvider();
     const narratorProvider = config.provider === 'openrouter' && client && config.narratorEnabled
-      ? new OpenRouterNarratorProvider(client)
+      ? new OpenRouterNarratorProvider(client, config, simulationId)
       : new DeterministicNarratorProvider();
     this.sim = new Simulation({
       config,
@@ -46,14 +44,11 @@ export class SimRunner {
       scenario: getScenario(config.scenarioId),
       agentProvider,
       narratorProvider,
-      // Deterministic world id: same seed + config produce identical worlds
-      // (the runner id above is the unique DB handle).
-      simulationId: `sim_${computeConfigHash(config).slice(0, 8)}_${config.seed}`,
+      simulationId,
     });
   }
 
   get status(): SimulationStatus {
-    if (this.paused && this.sim.status === 'running') return 'paused';
     return this.sim.status;
   }
 
@@ -69,7 +64,9 @@ export class SimRunner {
       JSON.stringify(c),
       c.scenarioId,
       c.seed,
-      c.models.nationAgent,
+      new Set(getPack(c.fictionPackId).nations.map((nation) => resolveNationModel(c, nation.id))).size > 1
+        ? 'mixed'
+        : resolveNationModel(c, getPack(c.fictionPackId).nations[0]?.id ?? ''),
       c.provider,
       now,
       now,
@@ -107,6 +104,21 @@ export class SimRunner {
         e.seq,
         JSON.stringify(e),
       );
+      if ((e.type === 'action' || e.type === 'rejection') && e.actionId && e.actorId) {
+        this.db.exec(
+          `INSERT OR REPLACE INTO actions (sim_id, turn, seq_in_turn, nation_id, action_id, target_id, status, reason, response_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          this.id,
+          e.turn,
+          e.seq,
+          e.actorId,
+          e.actionId,
+          e.targetId ?? null,
+          e.status,
+          e.reason ?? null,
+          JSON.stringify(e),
+        );
+      }
       this.persistedEventCount += 1;
     }
     // Audit.
@@ -136,43 +148,31 @@ export class SimRunner {
       this.persistedNarratorCount += 1;
     }
     // Decisions.
-    for (const [nid, d] of this.sim['decisions'] ?? []) {
-      void nid;
-      void d;
-    }
-    // Approvals.
-    for (const p of w.pendingApprovals) {
-      if (!this.persistedApprovalKeys.has(p.key)) {
-        this.db.exec(
-          `INSERT OR REPLACE INTO approvals (sim_id, key, turn, nation_id, action_id, status, decided_at_turn) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          this.id,
-          p.key,
-          p.turn,
-          p.nationId,
-          p.actionId,
-          p.status,
-          p.decidedAtTurn ?? null,
-        );
-        this.persistedApprovalKeys.add(p.key);
-      } else {
-        this.db.exec(
-          `UPDATE approvals SET status = ?, decided_at_turn = ? WHERE sim_id = ? AND key = ?`,
-          p.status,
-          p.decidedAtTurn ?? null,
-          this.id,
-          p.key,
-        );
-      }
+    for (const d of this.sim.allDecisionRecords()) {
+      const key = `${d.turn}:${d.nationId}`;
+      if (this.persistedDecisionKeys.has(key)) continue;
+      this.db.exec(
+        `INSERT OR REPLACE INTO decisions (sim_id, turn, nation_id, response_json, report_json, provider, model, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        this.id,
+        d.turn,
+        d.nationId,
+        JSON.stringify(d.response),
+        JSON.stringify(d.report),
+        d.provider,
+        d.model,
+        d.status,
+      );
+      this.persistedDecisionKeys.add(key);
     }
   }
 
-  /** Drive the simulation until pause/stop/completion/approval-wait. */
+  /** Drive the simulation autonomously until stop, completion, or failure. */
   async drive(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
-      while (!this.paused && this.sim.status !== 'completed' && this.sim.status !== 'stopped' && this.sim.status !== 'failed') {
-        if (this.sim.phase === 'awaiting_approval') break;
+      while (this.sim.status !== 'completed' && this.sim.status !== 'stopped' && this.sim.status !== 'failed') {
         await this.sim.step();
         this.persistDelta();
         this.persistNewSnapshots();
@@ -188,27 +188,7 @@ export class SimRunner {
 
   async start(): Promise<void> {
     if (this.sim.status !== 'idle') throw new Error('Simulation already started.');
-    this.paused = false;
     void this.drive();
-  }
-
-  pause(): void {
-    this.paused = true;
-    this.persistRow();
-  }
-
-  resume(): void {
-    if (this.sim.phase === 'awaiting_approval') return; // requires approvals first
-    this.paused = false;
-    void this.drive();
-  }
-
-  async stepOnce(): Promise<void> {
-    this.paused = true;
-    await this.sim.step();
-    this.persistDelta();
-    this.persistNewSnapshots();
-    this.persistRow();
   }
 
   /** Persist any snapshots produced by the engine that are not yet stored. */
@@ -222,16 +202,8 @@ export class SimRunner {
   }
 
   stop(): void {
-    this.paused = true;
     this.sim.requestStop();
     this.persistRow();
-  }
-
-  approve(key: string, approve: boolean): void {
-    this.sim.approve(key, approve);
-    this.persistDelta();
-    // After approvals the engine can resume; keep driving unless paused.
-    if (!this.paused) void this.drive();
   }
 
   private persistMetrics(turn: number): void {
@@ -281,9 +253,8 @@ export class RunnerManager {
   }
 
   create(config: SimulationConfig): SimRunner {
-    simIdCounter.n += 1;
-    const id = `sim_${computeConfigHash(config).slice(0, 8)}_${config.seed}_${simIdCounter.n}`;
-    if (config.provider === 'openrouter' && !this.client) {
+    const id = `sim_${computeConfigHash(config).slice(0, 8)}_${randomUUID().slice(0, 8)}`;
+    if (config.provider === 'openrouter' && (!this.client || !this.client.apiKeyPresent)) {
       throw new OpenRouterError('OpenRouter client unavailable; configure OPENROUTER_API_KEY or use mock mode.');
     }
     const runner = new SimRunner(id, config, this.db, this.client);

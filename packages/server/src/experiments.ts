@@ -1,10 +1,10 @@
 /**
  * Batch experiment runner: seeds x models x scenarios x replicates with
- * concurrency limits, failure tracking, resumability, and bootstrap-CI
+ * concurrency limits, failure tracking, and reproducible bootstrap-CI
  * aggregates. Descriptive statistics only — never causal claims.
  */
 import { randomUUID } from 'node:crypto';
-import type { ExperimentResult, ExperimentSpec, RunMetrics, SimulationConfig } from '@aiww/schemas';
+import { SimulationConfig, type ExperimentResult, type ExperimentSpec, type RunMetrics } from '@aiww/schemas';
 import {
   CODE_VERSION,
   DeterministicNarratorProvider,
@@ -15,8 +15,12 @@ import {
   finalMeanScore,
   getPack,
   getScenario,
+  Rng,
 } from '@aiww/engine';
 import type { Db } from './db.js';
+import { OpenRouterAgentProvider, OpenRouterNarratorProvider } from './llm-providers.js';
+import type { OpenRouterClient } from './openrouter.js';
+import { OpenRouterError } from './openrouter.js';
 
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
@@ -24,16 +28,17 @@ function percentile(sorted: number[], p: number): number {
   return sorted[idx];
 }
 
-function bootstrapCi(values: number[], iterations = 2000): { low: number; high: number } {
+function bootstrapCi(values: number[], seed: string, iterations = 2000): { low: number; high: number } {
   if (values.length < 2) {
     const v = values[0] ?? 0;
     return { low: v, high: v };
   }
+  const rng = Rng.fromParts('bootstrap', seed, values.join(','));
   const means: number[] = [];
   for (let i = 0; i < iterations; i++) {
     let s = 0;
     for (let j = 0; j < values.length; j++) {
-      s += values[Math.floor(Math.random() * values.length)];
+      s += values[rng.int(values.length)];
     }
     means.push(s / values.length);
   }
@@ -44,10 +49,12 @@ function bootstrapCi(values: number[], iterations = 2000): { low: number; high: 
 export class ExperimentManager {
   constructor(
     private readonly db: Db,
-    private readonly runOne: (config: SimulationConfig) => Promise<RunMetrics>,
+    private readonly runOne: (config: SimulationConfig, simulationId?: string) => Promise<RunMetrics>,
   ) {}
 
   async run(spec: ExperimentSpec): Promise<ExperimentResult> {
+    if (!this.baseConfig) throw new Error('Experiment base configuration is not initialized.');
+    const baseConfig = this.baseConfig;
     const id = `exp_${randomUUID().slice(0, 8)}`;
     const startedAt = new Date().toISOString();
     const records: ExperimentResult['records'] = [];
@@ -85,18 +92,39 @@ export class ExperimentManager {
         if (!job) break;
         const started = new Date().toISOString();
         try {
-          const base = this.baseConfig as SimulationConfig;
-          const config: SimulationConfig = {
+          const base = baseConfig;
+          const overrides = (spec.configOverrides ?? {}) as Record<string, unknown>;
+          const overrideModels = (overrides['models'] ?? {}) as Record<string, unknown>;
+          const overrideObservation = (overrides['observation'] ?? {}) as Record<string, unknown>;
+          const overrideLimits = (overrides['limits'] ?? {}) as Record<string, unknown>;
+          const overrideScoring = (overrides['scoring'] ?? {}) as Record<string, unknown>;
+          const overrideStopConditions = (overrides['stopConditions'] ?? {}) as Record<string, unknown>;
+          const nationAgents = Object.fromEntries(
+            getPack(base.fictionPackId).nations.map((nation) => [nation.id, job.model]),
+          );
+          const config = SimulationConfig.parse({
             ...base,
+            ...overrides,
             seed: job.seed,
             scenarioId: job.scenarioId,
             provider: spec.provider,
-            models: { ...base.models, nationAgent: job.model, worldNarrator: job.model, repair: job.model },
-            ...(spec.configOverrides as Partial<SimulationConfig> | undefined),
-          } as SimulationConfig;
-          const metrics = await this.runOne(config);
+            models: {
+              ...base.models,
+              ...overrideModels,
+              nationAgent: job.model,
+              nationAgents,
+              worldNarrator: job.model,
+              repair: job.model,
+            },
+            observation: { ...base.observation, ...overrideObservation },
+            limits: { ...base.limits, ...overrideLimits },
+            scoring: { ...base.scoring, ...overrideScoring },
+            stopConditions: { ...base.stopConditions, ...overrideStopConditions },
+          });
+          const simulationId = `exp_${computeConfigHash(config).slice(0, 8)}_${job.seed}_${job.replicate}`;
+          const metrics = await this.runOne(config, simulationId);
           records.push({
-            simulationId: `exp_${computeConfigHash(config).slice(0, 8)}_${job.seed}_${job.replicate}`,
+            simulationId,
             experimentId: id,
             seed: job.seed,
             model: job.model,
@@ -126,6 +154,13 @@ export class ExperimentManager {
       }
     };
     await Promise.all(Array.from({ length: concurrency }, worker));
+    records.sort(
+      (a, b) =>
+        a.scenarioId.localeCompare(b.scenarioId) ||
+        a.model.localeCompare(b.model) ||
+        a.seed.localeCompare(b.seed) ||
+        a.replicate - b.replicate,
+    );
 
     // Aggregate: descriptive statistics with bootstrap CIs where replicates allow.
     const groups = new Map<string, typeof records>();
@@ -139,9 +174,9 @@ export class ExperimentManager {
     const aggregate: ExperimentResult['aggregate'] = {
       byScenarioModel: [...groups.entries()].map(([key, rs]) => {
         const [scenarioId, model] = key.split('|');
-        const scores = rs.map((r) => r.finalMeanScore ?? 0);
+        const scores = rs.map((r) => r.finalMeanScore ?? 0).sort((a, b) => a - b);
         const mean = scores.reduce((a, b) => a + b, 0) / Math.max(1, scores.length);
-        const ci = bootstrapCi(scores);
+        const ci = bootstrapCi(scores, `${spec.name}|${key}`);
         return {
           scenarioId,
           model,
@@ -158,7 +193,7 @@ export class ExperimentManager {
     };
     const status = records.some((r) => r.status === 'failed') && records.every((r) => r.status === 'failed') ? 'failed' : 'completed';
     persist(status, aggregate);
-    return { id, spec, codeVersion: CODE_VERSION, promptVersion: PROMPT_VERSION, status: 'completed', records, aggregate, startedAt, endedAt: new Date().toISOString() };
+    return { id, spec, codeVersion: CODE_VERSION, promptVersion: PROMPT_VERSION, status, records, aggregate, startedAt, endedAt: new Date().toISOString() };
   }
 
   baseConfig: SimulationConfig | undefined;
@@ -189,21 +224,33 @@ export class ExperimentManager {
   }
 }
 
-/** Factory for a mock-mode one-shot runner used by the experiment manager. */
-export function makeMockRunOne(): (config: SimulationConfig) => Promise<RunMetrics> {
-  return async (config) => {
+/** Provider-aware one-shot runner used by the experiment manager. */
+export function makeRunOne(client: OpenRouterClient | null): (config: SimulationConfig, simulationId?: string) => Promise<RunMetrics> {
+  return async (config, requestedSimulationId) => {
+    const simulationId = requestedSimulationId ?? `experiment_${computeConfigHash(config)}_${randomUUID().slice(0, 8)}`;
+    if (config.provider === 'openrouter' && (!client || !client.apiKeyPresent)) {
+      throw new OpenRouterError('OpenRouter is not configured for this experiment.');
+    }
+    const agentProvider = config.provider === 'openrouter'
+      ? new OpenRouterAgentProvider(client!, config, simulationId)
+      : new MockAgentProvider();
+    const narratorProvider = config.provider === 'openrouter' && config.narratorEnabled
+      ? new OpenRouterNarratorProvider(client!, config, simulationId)
+      : new DeterministicNarratorProvider();
     const sim = new Simulation({
       config,
       pack: getPack(config.fictionPackId),
       scenario: getScenario(config.scenarioId),
-      agentProvider: new MockAgentProvider(),
-      narratorProvider: new DeterministicNarratorProvider(),
+      agentProvider,
+      narratorProvider,
+      simulationId,
     });
-    for (let i = 0; i < 500; i++) {
-      await sim.run();
-      if (sim.status !== 'awaiting_approval') break;
-      for (const p of sim.world.pendingApprovals.filter((x) => x.status === 'pending')) sim.approve(p.key, true);
-    }
+    await sim.run();
     return sim.computeMetrics();
   };
+}
+
+/** Backward-compatible test helper for deterministic mock experiments. */
+export function makeMockRunOne(): (config: SimulationConfig) => Promise<RunMetrics> {
+  return makeRunOne(null);
 }

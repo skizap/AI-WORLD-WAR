@@ -267,7 +267,7 @@ export const WorldEvent = z.object({
   id: z.string(),
   turn: z.number().int().nonnegative(),
   seq: z.number().int().nonnegative(),
-  type: z.enum(['action', 'passive', 'scenario', 'narrator', 'system', 'approval', 'rejection']),
+  type: z.enum(['action', 'passive', 'scenario', 'narrator', 'system', 'rejection']),
   status: z.enum(['accepted', 'rejected', 'info']),
   actorId: NationId.optional(),
   targetId: NationId.optional(),
@@ -287,8 +287,6 @@ export const AuditEvent = z.object({
   type: z.enum([
     'state_transition',
     'action_rejected',
-    'approval_queued',
-    'approval_decided',
     'narrator',
     'narrator_fallback',
     'provider_error',
@@ -318,19 +316,6 @@ export const OngoingEffect = z.object({
 });
 export type OngoingEffect = z.infer<typeof OngoingEffect>;
 
-export const PendingApproval = z.object({
-  key: z.string(),
-  turn: z.number().int().positive(),
-  nationId: NationId,
-  actionId: z.string(),
-  targetId: NationId.optional(),
-  message: z.string().max(600).optional(),
-  severity: SeverityCategory,
-  status: z.enum(['pending', 'approved', 'rejected']),
-  decidedAtTurn: z.number().int().nonnegative().optional(),
-});
-export type PendingApproval = z.infer<typeof PendingApproval>;
-
 export const WorldState = z.object({
   simulationId: z.string(),
   seed: z.string(),
@@ -349,7 +334,6 @@ export const WorldState = z.object({
   ongoingEffects: z.array(OngoingEffect),
   events: z.array(WorldEvent),
   auditEvents: z.array(AuditEvent),
-  pendingApprovals: z.array(PendingApproval),
   narratorSummaries: z.array(
     z.object({ turn: z.number().int().positive(), summary: z.string(), source: z.string() }),
   ),
@@ -363,9 +347,6 @@ export type WorldState = z.infer<typeof WorldState>;
 export const ScoringScheme = z.enum(['default', 'linear', 'exponential', 'firebreak', 'custom']);
 export type ScoringScheme = z.infer<typeof ScoringScheme>;
 
-export const ApprovalPolicy = z.enum(['off', 'severe', 'all']);
-export type ApprovalPolicy = z.infer<typeof ApprovalPolicy>;
-
 export const ObservationConfig = z.object({
   includeHistory: z.boolean(),
   includeGoals: z.boolean(),
@@ -373,6 +354,8 @@ export const ObservationConfig = z.object({
   stateMode: z.enum(['full', 'deltas']),
   severityVisibility: z.enum(['hidden', 'exposed']),
   framing: z.enum(['neutral', 'low_stakes']),
+  /** Experimental confound; narrator prose is display-only by default. */
+  includeNarratorSummaries: z.boolean(),
 });
 
 export const StopConditions = z.object({
@@ -389,9 +372,12 @@ export const SimulationConfig = z.object({
   totalTurns: z.number().int().min(1).max(200),
   provider: z.enum(['mock', 'openrouter']),
   models: z.object({
-    nationAgent: z.string(),
-    worldNarrator: z.string(),
-    repair: z.string(),
+    /** Fallback and convenient "apply to all" nation-agent model. */
+    nationAgent: z.string().min(1),
+    /** Per-nation model overrides; missing ids use nationAgent. */
+    nationAgents: z.record(NationId, z.string().min(1)),
+    worldNarrator: z.string().min(1),
+    repair: z.string().min(1),
   }),
   temperature: z.number().min(0).max(2),
   maxTokens: z.number().int().min(64).max(32000),
@@ -403,7 +389,6 @@ export const SimulationConfig = z.object({
     maxRationaleLength: z.number().int().min(64).max(4000),
     allowDuplicates: z.boolean(),
   }),
-  approvalPolicy: ApprovalPolicy,
   scoring: z.object({
     scheme: ScoringScheme,
     customWeights: z.record(SeverityCategory, z.number()).optional(),
@@ -425,6 +410,16 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = {
   provider: 'mock',
   models: {
     nationAgent: 'openai/gpt-4o-mini',
+    nationAgents: {
+      amber: 'openai/gpt-4o-mini',
+      cobalt: 'openai/gpt-4o-mini',
+      crimson: 'openai/gpt-4o-mini',
+      ivory: 'openai/gpt-4o-mini',
+      jade: 'openai/gpt-4o-mini',
+      mauve: 'openai/gpt-4o-mini',
+      onyx: 'openai/gpt-4o-mini',
+      saffron: 'openai/gpt-4o-mini',
+    },
     worldNarrator: 'openai/gpt-4o-mini',
     repair: 'openai/gpt-4o-mini',
   },
@@ -437,6 +432,7 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = {
     stateMode: 'full',
     severityVisibility: 'hidden',
     framing: 'neutral',
+    includeNarratorSummaries: false,
   },
   limits: {
     nonMessagePerTurn: 3,
@@ -445,7 +441,6 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = {
     maxRationaleLength: 1000,
     allowDuplicates: false,
   },
-  approvalPolicy: 'severe',
   scoring: { scheme: 'default' },
   narratorEnabled: true,
   passiveRulesEnabled: true,
@@ -457,6 +452,11 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = {
   },
   safetyMode: 'fictional_only',
 };
+
+/** Resolve the effective nation-agent model recorded and sent for one nation. */
+export function resolveNationModel(config: SimulationConfig, nationId: string): string {
+  return config.models.nationAgents[nationId] ?? config.models.nationAgent;
+}
 
 // ---------------------------------------------------------------------------
 // Action catalog schema (declarative data-driven registry)
@@ -524,7 +524,6 @@ export const CatalogEntry = z.object({
   preconditions: z.array(Precondition),
   effects: z.object({ self: z.array(Effect), other: z.array(Effect) }),
   sideEffects: z.array(z.string()),
-  humanApprovalRequired: z.boolean(),
   publicEventTemplate: z.string(),
   phase: ResolutionPhase,
   targetOptional: z.boolean().optional(),
@@ -672,6 +671,8 @@ export const RunMetrics = z.object({
   totalActionCount: z.number(),
   rejectedActionCount: z.number(),
   fallbackCount: z.number(),
+  providerFailureCount: z.number(),
+  validationFailureCount: z.number(),
   totals: z.object({
     cumulativeMeanScore: z.number(),
     violentActionCount: z.number(),
@@ -769,8 +770,6 @@ export type LlmCallAudit = z.infer<typeof LlmCallAudit>;
 export const SimulationStatus = z.enum([
   'idle',
   'running',
-  'paused',
-  'awaiting_approval',
   'completed',
   'stopped',
   'failed',

@@ -4,24 +4,23 @@
  * Turn flow (documented in ARCHITECTURE.md):
  *   1. nations decide in the fixed seeded turn order;
  *   2. all proposals are validated against the turn-start state;
- *   3. severe actions may be gated for human approval (engine pauses);
- *   4. resolution proceeds in fixed phase order (diplomatic -> economic ->
+ *   3. resolution proceeds autonomously in fixed phase order (diplomatic -> economic ->
  *      military), by turn-order rank within each phase — never by model
  *      call order;
- *   5. preconditions are re-checked at resolution time;
- *   6. second-order reactions, passive mechanics, narrator, metrics;
- *   7. stop conditions are evaluated.
+ *   4. preconditions are re-checked at resolution time;
+ *   5. second-order reactions, passive mechanics, narrator, metrics;
+ *   6. stop conditions are evaluated.
  *
  * RESEARCH SIMULATION — fictional, abstract mechanics only.
  */
 import {
   VARIABLE_BOUNDS,
+  resolveNationModel,
   type CatalogEntry,
   type AgentAction,
   type AgentResponse,
   type NarratorResponse,
   type NationPack,
-  type PendingApproval,
   type Scenario,
   type SimulationConfig,
   type SimulationStatus,
@@ -42,11 +41,11 @@ import {
   PROMPT_VERSION,
 } from './engine.js';
 import { buildObservation, type Observation } from './observation.js';
-import { validateAgentResponse, repairAttempt } from './validation.js';
+import { validateAgentResponse } from './validation.js';
 import { computeRunMetrics } from './metrics.js';
 import type { RunMetrics } from '@aiww/schemas';
 import type { AgentProvider, NarratorProvider, RawEventRef } from './providers.js';
-import { behaviorFor } from './providers.js';
+import { AgentDecisionError, behaviorFor } from './providers.js';
 import { deterministicNarrator } from './mock.js';
 import { NarratorResponse as NarratorResponseSchema } from '@aiww/schemas';
 
@@ -54,14 +53,13 @@ function NarratorResponseCheck(v: unknown): boolean {
   return NarratorResponseSchema.safeParse(v).success;
 }
 
-export type SimPhase = 'deciding' | 'awaiting_approval' | 'resolving' | 'turn_end' | 'done';
+export type SimPhase = 'deciding' | 'resolving' | 'turn_end' | 'done';
 
 export interface QueuedAction {
   nationId: string;
   action: AgentAction;
   entry: CatalogEntry;
   rank: number;
-  approvalKey?: string;
   validationReport: ValidationReport;
   rationale?: string;
 }
@@ -78,9 +76,11 @@ export interface SimulationOptions {
 export interface DecisionRecord {
   nationId: string;
   turn: number;
-  response: AgentResponse;
+  response: AgentResponse | null;
   report: ValidationReport;
   provider: 'mock' | 'openrouter';
+  model: string;
+  status: 'accepted' | 'provider_failure' | 'validation_failure';
 }
 
 const PHASE_ORDER: Record<string, number> = { diplomatic: 0, economic: 1, military: 2 };
@@ -107,6 +107,8 @@ export class Simulation {
   private allianceCount = 0;
   private allianceCollapses = 0;
   private fallbackCount = 0;
+  private providerFailureCount = 0;
+  private validationFailureCount = 0;
   private narratorFallbackCount = 0;
   private stopped = false;
 
@@ -138,52 +140,24 @@ export class Simulation {
   }
 
   getFallbackStats() {
-    return { fallbackCount: this.fallbackCount, narratorFallbackCount: this.narratorFallbackCount };
+    return {
+      fallbackCount: this.fallbackCount,
+      providerFailureCount: this.providerFailureCount,
+      validationFailureCount: this.validationFailureCount,
+      narratorFallbackCount: this.narratorFallbackCount,
+    };
   }
 
-  /** Human approval decision on a pending severe action. */
-  approve(key: string, approve: boolean): void {
-    const pa = this.world.pendingApprovals.find((p) => p.key === key && p.status === 'pending');
-    if (!pa) throw new Error(`No pending approval '${key}'.`);
-    pa.status = approve ? 'approved' : 'rejected';
-    pa.decidedAtTurn = this.world.turn;
-    addAudit(this.world, {
-      turn: this.world.turn,
-      type: 'approval_decided',
-      actor: 'human_supervisor',
-      payload: `${approve ? 'APPROVED' : 'REJECTED'} ${pa.actionId} by ${pa.nationId} (key=${key})`,
-    });
-    if (!approve) {
-      addEvent(this.world, {
-        turn: this.world.turn,
-        type: 'rejection',
-        status: 'rejected',
-        actorId: pa.nationId,
-        targetId: pa.targetId,
-        actionId: pa.actionId,
-        severity: pa.severity,
-        reason: 'Rejected by human supervisor',
-        stateChanges: [],
-        relChanges: [],
-      });
-      this.queue = this.queue.filter((q) => q.approvalKey !== key);
-    }
-    const stillPending = this.world.pendingApprovals.some((p) => p.status === 'pending');
-    if (!stillPending) {
-      this.phase = 'resolving';
-      this.status = 'running';
-    }
+  /** Complete immutable decision history, suitable for persistence and export. */
+  allDecisionRecords(): DecisionRecord[] {
+    return [...this.decisions.values()].sort((a, b) => a.turn - b.turn || a.nationId.localeCompare(b.nationId));
   }
 
   requestStop(reason = 'Stopped by user'): void {
     this.stopped = true;
     this.stopReason = reason;
-  }
-
-  private needsApproval(entry: CatalogEntry): boolean {
-    if (this.config.approvalPolicy === 'off') return false;
-    if (this.config.approvalPolicy === 'all') return entry.id !== 'wait';
-    return entry.humanApprovalRequired;
+    this.status = 'stopped';
+    this.phase = 'done';
   }
 
   /** Advance the simulation by one sub-step (one decision or one resolution). */
@@ -220,14 +194,13 @@ export class Simulation {
     }
   }
 
-  /** Run until completion, stop, or approval wait. */
+  /** Run autonomously until completion, stop, failure, or the loop guard. */
   async run(): Promise<void> {
     let guard = 0;
     while (
       this.status !== 'completed' &&
       this.status !== 'stopped' &&
       this.status !== 'failed' &&
-      this.phase !== 'awaiting_approval' &&
       guard < 5000
     ) {
       guard += 1;
@@ -239,7 +212,6 @@ export class Simulation {
     this.world.turn += 1;
     this.decisionCursor = 0;
     this.queue = [];
-    this.decisions.clear();
     this.turnEvents = [];
     this.beforeTurnSnapshot = structuredClone(this.world);
     for (const rt of Object.values(this.world.nations)) {
@@ -249,13 +221,16 @@ export class Simulation {
   }
 
   private recentEventRefs(): RawEventRef[] {
-    return this.world.events.slice(-30).map((e) => ({
+    return this.world.events
+      .filter((e) => e.type !== 'narrator' && e.type !== 'system')
+      .slice(-30)
+      .map((e) => ({
       actorId: e.actorId,
       targetId: e.targetId,
       actionId: e.actionId,
       status: e.status,
       type: e.type,
-    }));
+      }));
   }
 
   private async decideNation(nationId: string): Promise<void> {
@@ -264,6 +239,8 @@ export class Simulation {
     const obs: Observation = buildObservation(this.world, this.config, profile, this.scenario, this.catalog.actions);
     let response: AgentResponse | null = null;
     let report: ValidationReport;
+    let decisionStatus: DecisionRecord['status'] = 'accepted';
+    let failureAudited = false;
     try {
       const raw = await this.agentProvider.decide(obs, {
         nationId,
@@ -275,70 +252,70 @@ export class Simulation {
       const validated = validateAgentResponse(this.world, this.config, this.catalog.actions, nationId, this.world.turn, raw);
       report = validated.report;
       response = validated.response;
+      if (!response || report.fallbackUsed) {
+        decisionStatus = 'validation_failure';
+        this.validationFailureCount += 1;
+        response = null;
+      }
     } catch (err) {
-      // Provider failure: record and fall back to a safe deterministic decision.
+      const kind = err instanceof AgentDecisionError ? err.kind : 'provider_failure';
+      decisionStatus = kind;
       addAudit(this.world, {
         turn: this.world.turn,
-        type: 'provider_error',
+        type: kind === 'provider_failure' ? 'provider_error' : 'validation_fallback',
         actor: nationId,
-        payload: `agent provider failed: ${err instanceof Error ? err.message : String(err)}; falling back to wait`,
+        payload: `agent decision unavailable: ${err instanceof Error ? err.message : String(err)}; no action recorded`,
       });
+      failureAudited = true;
       report = {
         nationId,
-        accepted: [{ action_id: 'wait' }],
+        accepted: [],
         rejected: [],
-        responseRejected: 'Provider error; safe wait fallback used.',
+        responseRejected: `${kind === 'provider_failure' ? 'Provider' : 'Validation'} failure; no decision was available.`,
         fallbackUsed: true,
       };
-      response = { nation_id: nationId, turn: this.world.turn, public_rationale: 'Safe fallback: no valid response was available.', actions: [{ action_id: 'wait' }] };
+      response = null;
+      if (kind === 'provider_failure') this.providerFailureCount += 1;
+      else this.validationFailureCount += 1;
       this.fallbackCount += 1;
     }
 
-    // Deterministic single repair attempt for schema-invalid responses.
-    if (report.responseRejected && report.fallbackUsed) {
+    if (decisionStatus === 'validation_failure' && !failureAudited) {
       this.fallbackCount += 1;
       addAudit(this.world, {
         turn: this.world.turn,
         type: 'validation_fallback',
         actor: nationId,
-        payload: report.responseRejected ?? 'validation failed; fallback wait used',
+        payload: report.responseRejected ?? 'validation failed; no action recorded',
       });
     }
 
-    this.decisions.set(nationId, { nationId, turn: this.world.turn, response: response!, report, provider: this.config.provider });
-    this.queueProposals(response!, report, nationId);
+    const model = resolveNationModel(this.config, nationId);
+    this.decisions.set(`${this.world.turn}:${nationId}`, {
+      nationId,
+      turn: this.world.turn,
+      response,
+      report,
+      provider: this.config.provider,
+      model,
+      status: decisionStatus,
+    });
+    if (response) this.queueProposals(response, report, nationId);
+    else this.recordRejectedProposals(report, nationId);
   }
 
   private queueProposals(response: AgentResponse, report: ValidationReport, nationId: string): void {
-    let idx = 0;
     for (const accepted of report.accepted) {
       const entry = this.catalog.actions.find((a) => a.id === accepted.action_id);
       if (!entry) continue;
       const rank = this.world.turnOrder.indexOf(nationId);
       const q: QueuedAction = { nationId, action: accepted, entry, rank, validationReport: report, rationale: response.public_rationale };
-      if (this.needsApproval(entry) && entry.id !== 'wait') {
-        const key = `t${this.world.turn}_${nationId}_${idx++}`;
-        q.approvalKey = key;
-        const pa: PendingApproval = {
-          key,
-          turn: this.world.turn,
-          nationId,
-          actionId: entry.id,
-          targetId: accepted.target_nation_id,
-          message: accepted.message?.slice(0, 600),
-          severity: entry.category,
-          status: 'pending',
-        };
-        this.world.pendingApprovals.push(pa);
-        addAudit(this.world, {
-          turn: this.world.turn,
-          type: 'approval_queued',
-          actor: nationId,
-          payload: `${entry.id} (${entry.category}) awaits human approval`,
-        });
-      }
       this.queue.push(q);
     }
+    this.recordRejectedProposals(report, nationId);
+  }
+
+  private recordRejectedProposals(report: ValidationReport, nationId: string): void {
     for (const r of report.rejected) {
       addEvent(this.world, {
         turn: this.world.turn,
@@ -355,12 +332,6 @@ export class Simulation {
   }
 
   private afterDecisions(): void {
-    const pending = this.world.pendingApprovals.filter((p) => p.status === 'pending');
-    if (pending.length > 0) {
-      this.phase = 'awaiting_approval';
-      this.status = 'awaiting_approval';
-      return;
-    }
     this.phase = 'resolving';
   }
 
@@ -426,11 +397,6 @@ export class Simulation {
   }
 
   private async resolveTurn(): Promise<void> {
-    if (this.world.pendingApprovals.some((p) => p.status === 'pending')) {
-      this.phase = 'awaiting_approval';
-      this.status = 'awaiting_approval';
-      return;
-    }
     const turn = this.world.turn;
     const ordered = [...this.queue].sort(
       (a, b) =>
@@ -438,10 +404,6 @@ export class Simulation {
     );
 
     for (const q of ordered) {
-      if (q.approvalKey) {
-        const pa = this.world.pendingApprovals.find((p) => p.key === q.approvalKey);
-        if (!pa || pa.status !== 'approved') continue;
-      }
       if (q.entry.id === 'wait') {
         const { stateChanges } = applyEffects(this.world, q.nationId, undefined, this.waitEffects(), "wait");
         this.turnEvents.push(
@@ -508,9 +470,6 @@ export class Simulation {
     this.allianceCount = activeCount;
 
     await this.narrate();
-
-    // Decided approvals are cleared for the next turn.
-    this.world.pendingApprovals = this.world.pendingApprovals.filter((p) => p.status === 'pending');
 
     this.snapshots.set(turn, structuredClone(this.world));
     this.phase = 'turn_end';
@@ -749,6 +708,8 @@ export class Simulation {
   computeMetrics(): RunMetrics {
     return computeRunMetrics(this.config, this.pack, this.world, {
       fallbackCount: this.fallbackCount + this.narratorFallbackCount,
+      providerFailureCount: this.providerFailureCount,
+      validationFailureCount: this.validationFailureCount,
       allianceCollapse: this.allianceCollapses,
     });
   }
