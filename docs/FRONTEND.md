@@ -346,10 +346,11 @@ update `api.ts` first — views will then type-error where they need updating.
   No physical map coordinates feed simulation distances, influence, ownership,
   model observations, or event effects. `mapPosition`/`distances` in the legacy
   fiction pack remain synthetic and unused by the atlas.
-- New simulations use the versioned `aurelia_world_8_v2` fiction pack so the
-  agent-visible Aurelia framing is a fictional world. `baseline_8` and its
-  continent wording remain unchanged for saved configurations and replay
-  compatibility; no simulation mechanics change with this content revision.
+- New simulations use the versioned `aurelia_world_8_v2` fiction pack and
+  `neutral_world_v2` scenario so agent-visible Aurelia framing is a fictional
+  world. `baseline_8` and the original `neutral` scenario retain their old
+  continent wording/content for saved configurations and replay compatibility;
+  no simulation mechanics change with this content revision.
 - Accepted new action events alone animate. The in-memory world snapshot is
   intentionally preferred over the persisted events endpoint because SQLite
   event writes flush after simulation steps; initial/within-turn events can be

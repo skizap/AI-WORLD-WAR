@@ -99,7 +99,7 @@ describe('API integration (mock mode)', () => {
   }, 60_000);
 
   it('resolves severe actions autonomously without an approval phase', async () => {
-    const config = { ...DEFAULT_SIMULATION_CONFIG, fictionPackId: 'baseline_8', totalTurns: 1, narratorEnabled: false };
+    const config = { ...DEFAULT_SIMULATION_CONFIG, scenarioId: 'neutral', fictionPackId: 'baseline_8', totalTurns: 1, narratorEnabled: false };
     const sim = new Simulation({
       config,
       pack: getPack('baseline_8'),
@@ -189,6 +189,7 @@ describe('API integration (mock mode)', () => {
   it('records provider failure as a missing decision, not a model-selected wait', async () => {
     const config: SimulationConfig = {
       ...DEFAULT_SIMULATION_CONFIG,
+      scenarioId: 'neutral',
       fictionPackId: 'baseline_8',
       seed: 'fallback-1',
       totalTurns: 3,

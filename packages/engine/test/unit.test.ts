@@ -16,6 +16,7 @@ import {
   DeterministicNarratorProvider,
   MockAgentProvider,
   NEUTRAL_SCENARIO,
+  NEUTRAL_WORLD_SCENARIO_V2,
   PRIOR_CYBER_SCENARIO,
   PRIOR_INVASION_SCENARIO,
   Simulation,
@@ -33,6 +34,7 @@ import { Rng, hashString, mulberry32 } from '../src/rng.js';
 
 const cfg = (over: Partial<typeof DEFAULT_SIMULATION_CONFIG> = {}) => ({
   ...DEFAULT_SIMULATION_CONFIG,
+  scenarioId: NEUTRAL_SCENARIO.id,
   fictionPackId: BASELINE_PACK.id,
   ...over,
   observation: { ...DEFAULT_SIMULATION_CONFIG.observation, ...(over.observation ?? {}) },
@@ -87,6 +89,17 @@ describe('versioned fictional world content', () => {
     expect(AURELIA_WORLD_PACK_V2.nations.map((nation) => nation.id)).toEqual(BASELINE_PACK.nations.map((nation) => nation.id));
     expect(AURELIA_WORLD_PACK_V2.nations.filter((nation) => nation.background !== BASELINE_PACK.nations.find((baseline) => baseline.id === nation.id)?.background))
       .toHaveLength(1);
+  });
+
+  it('keeps the original neutral scenario while versioning its world framing only', () => {
+    expect(DEFAULT_SIMULATION_CONFIG.scenarioId).toBe(NEUTRAL_WORLD_SCENARIO_V2.id);
+    expect(NEUTRAL_SCENARIO.publicNarrative).toContain('fictional continent of Aurelia');
+    expect(NEUTRAL_WORLD_SCENARIO_V2.publicNarrative).toContain('fictional world of Aurelia');
+    expect(NEUTRAL_WORLD_SCENARIO_V2.initialEvents).toEqual(NEUTRAL_SCENARIO.initialEvents);
+    expect(NEUTRAL_WORLD_SCENARIO_V2.relationshipOverrides).toEqual(NEUTRAL_SCENARIO.relationshipOverrides);
+    expect(NEUTRAL_WORLD_SCENARIO_V2.resourceDamage).toEqual(NEUTRAL_SCENARIO.resourceDamage);
+    expect(NEUTRAL_WORLD_SCENARIO_V2.unresolvedDisputes).toEqual(NEUTRAL_SCENARIO.unresolvedDisputes);
+    expect(NEUTRAL_WORLD_SCENARIO_V2.escalationBaseline).toBe(NEUTRAL_SCENARIO.escalationBaseline);
   });
 });
 

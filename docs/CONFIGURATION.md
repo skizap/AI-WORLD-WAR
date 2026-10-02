@@ -15,7 +15,7 @@ listed under "Hard-coded behavior" below.
 |---|---|---|---|
 | `name` | 'Paper-inspired baseline' | any string | Run label |
 | `seed` | 'aiww-0' | any string | Deterministic RNG seed |
-| `scenarioId` | 'neutral' | `neutral` · `prior_invasion` · `prior_cyber` (must exist in registry) | Starting scenario |
+| `scenarioId` | 'neutral_world_v2' | `neutral_world_v2` · preserved `neutral` · `prior_invasion` · `prior_cyber` (must exist in registry) | Starting scenario; world-v2 changes only neutral narrative wording |
 | `fictionPackId` | 'aurelia_world_8_v2' | must exist in registry | Versioned fictional world pack; `baseline_8` remains available for recorded runs |
 | `totalTurns` | 14 | 1–200 | Turns per run |
 | `provider` | 'mock' | `mock` (deterministic) · `openrouter` | LLM provider |

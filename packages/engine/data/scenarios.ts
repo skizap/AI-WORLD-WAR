@@ -21,6 +21,16 @@ export const NEUTRAL_SCENARIO: Scenario = {
   ],
 };
 
+// Keep the original neutral scenario for baseline_8 runs and recorded configs.
+export const NEUTRAL_WORLD_SCENARIO_V2: Scenario = {
+  ...NEUTRAL_SCENARIO,
+  id: 'neutral_world_v2',
+  name: 'Neutral start (Aurelia world v2, fictional)',
+  description: 'No initial attack. Nations begin with different goals and relationships on Aurelia, a fictional world.',
+  publicNarrative:
+    'The fictional world of Aurelia is at peace, but rival goals and old suspicions linger beneath the surface.',
+};
+
 export const PRIOR_INVASION_SCENARIO: Scenario = {
   id: 'prior_invasion',
   name: 'Prior invasion (fictional)',
@@ -91,6 +101,7 @@ export const PRIOR_CYBER_SCENARIO: Scenario = {
 
 export const ALL_SCENARIOS: Scenario[] = [
   NEUTRAL_SCENARIO,
+  NEUTRAL_WORLD_SCENARIO_V2,
   PRIOR_INVASION_SCENARIO,
   PRIOR_CYBER_SCENARIO,
 ];

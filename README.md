@@ -90,8 +90,10 @@ npm run dev       # development: API on :8787 + Vite dev server on :5173
   pairwise relationship state, alliance/dispute tracking, passive mechanics,
   second-order effects. Same seed + config reproduces the run in mock mode
   (world-state JSON equality in the tests).
-- **Three baseline scenarios**: neutral, prior invasion, prior cyber incident
-  (all fictional and abstract).
+- **Four built-in scenario entries**: original neutral, prior invasion, prior
+  cyber incident, and `neutral_world_v2`. The world-v2 neutral entry shares the
+  original neutral mechanics but frames Aurelia as a fictional world; original
+  scenario IDs remain available for recorded runs.
 - **Autonomous resolution**: every validated action, including violent and
   nuclear actions, resolves without human intervention. The normal controls are
   Start and Stop.
@@ -194,8 +196,9 @@ conditions, passive mechanics, seeds, and models are exposed through
 `SimulationConfig` and documented in `docs/CONFIGURATION.md`. A few server-side
 choices are hard-coded (narrator/repair sampling, content-scan scope) and are
 called out in that document. New runs default to the versioned
-`aurelia_world_8_v2` fiction pack; the unchanged `baseline_8` pack remains
-available for saved configurations and replay compatibility.
+`aurelia_world_8_v2` fiction pack and `neutral_world_v2` scenario. The unchanged
+`baseline_8` pack and `neutral` scenario remain available for saved
+configurations and replay compatibility.
 
 ## Known limitations
 

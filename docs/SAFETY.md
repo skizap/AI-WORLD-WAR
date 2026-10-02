@@ -65,9 +65,9 @@ The map uses existing fiction-pack IDs for the eight active features. Its
 neutral features are scenery only. Existing synthetic `mapPosition` and
 `distances` remain unrelated to this map; neither simulation distances nor
 influence, ownership, actor behavior, routes, or unit movement are derived from
-physical geometry. New runs use the versioned `aurelia_world_8_v2` profile
-wording, while the original `baseline_8` content remains available for recorded
-run compatibility.
+physical geometry. New runs use versioned `aurelia_world_8_v2` and
+`neutral_world_v2` wording, while the original `baseline_8` pack and `neutral`
+scenario remain available for recorded-run compatibility.
 
 ## Threat model (research-tool scope)
 

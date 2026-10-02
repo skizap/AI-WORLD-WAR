@@ -23,6 +23,7 @@ import {
 
 const cfg = (over: Partial<typeof DEFAULT_SIMULATION_CONFIG> = {}) => ({
   ...DEFAULT_SIMULATION_CONFIG,
+  scenarioId: 'neutral',
   fictionPackId: BASELINE_PACK.id,
   ...over,
   observation: { ...DEFAULT_SIMULATION_CONFIG.observation, ...(over.observation ?? {}) },
