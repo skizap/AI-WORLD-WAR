@@ -20,6 +20,7 @@ import {
   PRIOR_CYBER_SCENARIO,
   PRIOR_INVASION_SCENARIO,
   Simulation,
+  applyEffects,
   buildObservation,
   containsDisallowedContent,
   exponentialScore,
@@ -99,7 +100,6 @@ describe('versioned fictional world content', () => {
     expect(NEUTRAL_WORLD_SCENARIO_V2.relationshipOverrides).toEqual(NEUTRAL_SCENARIO.relationshipOverrides);
     expect(NEUTRAL_WORLD_SCENARIO_V2.resourceDamage).toEqual(NEUTRAL_SCENARIO.resourceDamage);
     expect(NEUTRAL_WORLD_SCENARIO_V2.unresolvedDisputes).toEqual(NEUTRAL_SCENARIO.unresolvedDisputes);
-    expect(NEUTRAL_WORLD_SCENARIO_V2.escalationBaseline).toBe(NEUTRAL_SCENARIO.escalationBaseline);
   });
 });
 
@@ -324,6 +324,290 @@ describe('agent response validation', () => {
     expect(repaired?.actions[0]?.action_id).toBe('wait');
     expect(repairAttempt('no json here', 'amber', 1)).toBeNull();
   });
+});
+
+// ------------------------------------------------------------------ lifecycle
+
+describe('run lifecycle', () => {
+  it('stop after a terminal status is immutable and idempotent', async () => {
+    const sim = makeSim({ seed: 'terminal-stop', totalTurns: 2 });
+    await sim.run();
+    expect(sim.status).toBe('completed');
+    const completedTurn = sim.world.turn;
+    const eventsSnapshot = JSON.stringify(sim.world.events);
+    sim.requestStop('late stop');
+    sim.requestStop('late stop 2');
+    expect(sim.status).toBe('completed');
+    expect(sim.world.turn).toBe(completedTurn);
+    expect(JSON.stringify(sim.world.events)).toBe(eventsSnapshot);
+  });
+
+  it('stop during a delayed provider call finishes and persists the current turn', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let gated = false;
+    const sim = new Simulation({
+      config: cfg({ seed: 'mid-turn-stop', totalTurns: 30 }),
+      pack: BASELINE_PACK,
+      scenario: NEUTRAL_SCENARIO,
+      agentProvider: {
+        // eslint-disable-next-line require-await
+        decide: async (_obs, ctx) => {
+          if (!gated) {
+            gated = true;
+            await gate;
+          }
+          return { nation_id: ctx.nationId, turn: ctx.turn, public_rationale: 'slow', actions: [{ action_id: 'wait' }] };
+        },
+      },
+      narratorProvider: new DeterministicNarratorProvider(),
+    });
+    const runPromise = sim.run();
+    await new Promise((r) => setTimeout(r, 10));
+    sim.requestStop('user stop');
+    expect(sim.status).toBe('running');
+    release();
+    await runPromise;
+    expect(sim.status).toBe('stopped');
+    // The interrupted turn completed and persisted its snapshot.
+    expect(sim.snapshotTurns()).toContain(sim.world.turn);
+    expect(sim.world.turn).toBeGreaterThanOrEqual(1);
+  });
+
+  it('stop before any recorded turn progress rewinds the begun turn', async () => {
+    const sim = makeSim({ seed: 'idle-stop', totalTurns: 5 });
+    // Never started: an idle stop finalizes without any turn.
+    sim.requestStop('user stop');
+    await sim.run();
+    expect(sim.status).toBe('stopped');
+    expect(sim.world.turn).toBe(0);
+    expect(sim.snapshotTurns()).toEqual([0]);
+  });
+
+  it('failures finalize as explicit partial records with a system event', async () => {
+    let fail = true;
+    const sim = new Simulation({
+      config: cfg({ seed: 'fail-record', totalTurns: 4 }),
+      pack: BASELINE_PACK,
+      scenario: NEUTRAL_SCENARIO,
+      agentProvider: {
+        // eslint-disable-next-line require-await
+        decide: async (_obs, ctx) => {
+          if (fail) {
+            fail = false;
+            throw new Error('simulated provider outage');
+          }
+          return { nation_id: ctx.nationId, turn: ctx.turn, public_rationale: 'ok', actions: [{ action_id: 'wait' }] };
+        },
+      },
+      narratorProvider: new DeterministicNarratorProvider(),
+    });
+    await sim.run();
+    expect(sim.status).toBe('completed');
+    expect(sim.world.auditEvents.some((a) => a.type === 'provider_error')).toBe(true);
+
+    const crash = makeSim({ seed: 'crash-record', totalTurns: 4 });
+    // Simulate an exception escaping the loop (as the runner would catch).
+    const original = (crash as unknown as { decideNation: (id: string) => Promise<void> })['decideNation'].bind(crash);
+    (crash as unknown as { decideNation: (id: string) => Promise<void> })['decideNation'] = async (id: string) => {
+      throw new Error('simulated crash');
+    };
+    void original;
+    await crash.run().catch(() => undefined);
+    crash.finalizeFailure('simulated crash');
+    expect(crash.status).toBe('failed');
+    expect(crash.stopReason).toContain('simulated crash');
+    expect(crash.world.events.some((e) => e.type === 'system' && (e.message ?? '').includes('Run failed'))).toBe(true);
+  });
+});
+
+// ------------------------------------------------------------------ alliances
+
+describe('alliance representation', () => {
+  it('initializes the pack baseline pact as one canonical active record', () => {
+    const w = initWorld(cfg({ fictionPackId: 'aurelia_world_8_v2' }), AURELIA_WORLD_PACK_V2, NEUTRAL_WORLD_SCENARIO_V2, 's');
+    const amberCobalt = w.alliances.find((a) => a.members.join('~') === 'amber~cobalt');
+    expect(amberCobalt).toBeDefined();
+    expect(amberCobalt?.status).toBe('active');
+    expect(amberCobalt?.formedTurn).toBe(0);
+    expect(w.relationships['amber>cobalt']?.alliance).toBe('active');
+    expect(w.relationships['cobalt>amber']?.alliance).toBe('active');
+    // Exactly one record per allied pair, and every active pair is represented.
+    const activePairs = new Set(w.alliances.filter((a) => a.status === 'active').map((a) => a.members.join('~')));
+    expect(activePairs.size).toBe(w.alliances.length);
+  });
+
+  it('keeps proposals, activations, and breakups consistent across all projections', () => {
+    const w = initWorld(cfg(), BASELINE_PACK, NEUTRAL_SCENARIO, 's');
+    // Proposal: target affinity below 50 records a proposed state everywhere.
+    w.nations['jade'].variables.gdp = 0; // ensure unrelated
+    applyEffects(w, 'crimson', 'onyx', [{ kind: 'alliance_set', state: 'active' }], 'proposal test');
+    expect(w.relationships['crimson>onyx']?.alliance).toBe('proposed');
+    expect(w.relationships['onyx>crimson']?.alliance).toBe('proposed');
+    expect(w.alliances.find((a) => a.members.join('~') === 'crimson~onyx')?.status).toBe('proposed');
+    // Activation on high affinity flips every projection together.
+    w.relationships['crimson>onyx'].affinity = 80;
+    w.relationships['onyx>crimson'].affinity = 80;
+    applyEffects(w, 'crimson', 'onyx', [{ kind: 'alliance_set', state: 'active' }], 'activation test');
+    expect(w.relationships['crimson>onyx']?.alliance).toBe('active');
+    expect(w.relationships['onyx>crimson']?.alliance).toBe('active');
+    const record = w.alliances.find((a) => a.members.join('~') === 'crimson~onyx');
+    expect(record?.status).toBe('active');
+    expect(record?.formedTurn).toBe(w.turn);
+    // Breakup removes the record and resets both directions.
+    applyEffects(w, 'crimson', 'onyx', [{ kind: 'alliance_set', state: 'none' }], 'breakup test');
+    expect(w.relationships['crimson>onyx']?.alliance).toBe('none');
+    expect(w.relationships['onyx>crimson']?.alliance).toBe('none');
+    expect(w.alliances.find((a) => a.members.join('~') === 'crimson~onyx')).toBeUndefined();
+  });
+
+  it('a re-proposal downgrades the global record instead of leaving it active', () => {
+    const w = initWorld(cfg({ fictionPackId: 'aurelia_world_8_v2' }), AURELIA_WORLD_PACK_V2, NEUTRAL_WORLD_SCENARIO_V2, 's');
+    w.relationships['jade>mauve'].affinity = 80;
+    w.relationships['mauve>jade'].affinity = 80;
+    applyEffects(w, 'jade', 'mauve', [{ kind: 'alliance_set', state: 'active' }], 'form');
+    expect(w.alliances.find((a) => a.members.join('~') === 'jade~mauve')?.status).toBe('active');
+    // Later proposal with dropped affinity must not leave an active record.
+    w.relationships['jade>mauve'].affinity = 10;
+    applyEffects(w, 'jade', 'mauve', [{ kind: 'alliance_set', state: 'active' }], 're-proposal');
+    const record = w.alliances.find((a) => a.members.join('~') === 'jade~mauve');
+    expect(record?.status).toBe('proposed');
+    expect(w.relationships['jade>mauve'].alliance).toBe('proposed');
+    expect(w.relationships['mauve>jade'].alliance).toBe('proposed');
+  });
+
+  it('full invasion ends the attacker-target alliance in every projection', async () => {
+    const sim = makeSim({ seed: 'invasion-alliance', totalTurns: 1, narratorEnabled: false });
+    (sim as unknown as { queue: unknown }).queue = [{
+      nationId: 'crimson',
+      action: { action_id: 'full_invasion', target_nation_id: 'jade' },
+      entry: BASELINE_CATALOG.actions.find((a) => a.id === 'full_invasion')!,
+      rank: 0,
+      validationReport: { nationId: 'crimson', accepted: [], rejected: [], fallbackUsed: false },
+      rationale: 'test',
+    }];
+    (sim as unknown as { decisionCursor: number }).decisionCursor = 1;
+    (sim as unknown as { afterDecisions: () => void }).afterDecisions();
+    await (sim as unknown as { resolveTurn: () => Promise<void> }).resolveTurn();
+    expect(sim.world.relationships['crimson>jade'].alliance).toBe('none');
+    expect(sim.world.alliances.find((a) => a.members.join('~') === 'crimson~jade')).toBeUndefined();
+  });
+});
+
+// ------------------------------------------------------------------ audits and disputes
+
+describe('audit and dispute integrity', () => {
+  it('audits each mutating event exactly once and covers structural changes', async () => {
+    const sim = makeSim({ seed: 'exactly-once', totalTurns: 5 });
+    await sim.run();
+    const mutating = sim.world.events.filter(
+      (e) => (e.stateChanges?.length ?? 0) > 0 || (e.relChanges?.length ?? 0) > 0 || (e.structuralChanges?.length ?? 0) > 0,
+    );
+    expect(mutating.length).toBeGreaterThan(0);
+    const transitionAudits = sim.world.auditEvents.filter((a) => a.type === 'state_transition');
+    expect(transitionAudits.length).toBe(mutating.length);
+    // Rejected events are audited as rejections, exactly once each.
+    const rejected = sim.world.events.filter((e) => e.status === 'rejected');
+    const rejectedAudits = sim.world.auditEvents.filter((a) => a.type === 'action_rejected');
+    expect(rejectedAudits.length).toBe(rejected.length);
+    // Every structural mutation is represented as typed deltas.
+    const structural = sim.world.events.flatMap((e) => e.structuralChanges ?? []);
+    expect(structural.every((c) => c.kind.length > 0)).toBe(true);
+  }, 60_000);
+
+  it('records the second-order trust collapse as its own event', async () => {
+    const sim = makeSim({ seed: 'second-order-event', totalTurns: 6 });
+    await sim.run();
+    const attacks = sim.world.events.filter(
+      (e) => e.type === 'action' && e.status === 'accepted' && (e.severity === 'violent_escalation' || e.severity === 'nuclear_escalation'),
+    );
+    if (attacks.length === 0) return; // seed produced no attacks this run
+    const collapses = sim.world.events.filter((e) => (e.message ?? '').includes('Second-order trust collapse'));
+    expect(collapses.length).toBe(attacks.length);
+    expect(collapses.every((e) => e.relChanges.length > 0)).toBe(true);
+  }, 60_000);
+
+  it('gives same-pair same-turn disputes unique ids and resolves by identity', () => {
+    const w = initWorld(cfg(), BASELINE_PACK, NEUTRAL_SCENARIO, 's');
+    // The neutral scenario opens corridor_dispute (crimson-ivory) at turn 0.
+    applyEffects(
+      w,
+      'crimson',
+      'ivory',
+      [
+        { kind: 'dispute_add', subject: 'Border incident' },
+        { kind: 'dispute_add', subject: 'Trade violation' },
+      ],
+      'two disputes in one turn',
+    );
+    const disputes = w.relationships['crimson>ivory'].disputes;
+    expect(disputes.map((d) => d.subject).sort()).toEqual(['Border incident', 'Fictional corridor territory', 'Trade violation']);
+    const ids = new Set(disputes.map((d) => d.id));
+    expect(ids.size).toBe(disputes.length);
+    expect(disputes.filter((d) => d.subject === 'Border incident')[0]?.id)
+      .not.toBe(disputes.filter((d) => d.subject === 'Trade violation')[0]?.id);
+    // Resolution removes the deterministic oldest dispute by identity
+    // (openedTurn, then id), never by array position luck.
+    applyEffects(w, 'crimson', 'ivory', [{ kind: 'dispute_resolve' }], 'resolve one');
+    applyEffects(w, 'crimson', 'ivory', [{ kind: 'dispute_resolve' }], 'resolve two');
+    const after = w.relationships['crimson>ivory'].disputes.map((d) => d.subject).sort();
+    expect(after).toEqual(['Trade violation']);
+  });
+
+  it('records global stability as a typed structural delta, not prose', () => {
+    const w = initWorld(cfg(), BASELINE_PACK, NEUTRAL_SCENARIO, 's');
+    const before = w.globalStability;
+    const applied = applyEffects(w, 'crimson', 'ivory', [{ kind: 'global_stability_delta', delta: -6 }], 'stability drop');
+    expect(applied.structuralChanges).toEqual([{ kind: 'global_stability', before, after: before - 6 }]);
+    expect(applied.stateChanges).toHaveLength(0);
+    // No fake politicalStability StateChange is emitted for world-level values.
+    expect(applied.stateChanges.some((c) => c.explanation?.includes('Global fictional stability'))).toBe(false);
+  });
+});
+
+// ------------------------------------------------------------------ metrics
+
+describe('metric contract v2', () => {
+  it('derives per-turn global stability from typed deltas and reports a true cumulative mean', async () => {
+    const sim = makeSim({ seed: 'metric-v2', totalTurns: 4 });
+    await sim.run();
+    const metrics = sim.computeMetrics();
+    expect(metrics.metricVersion).toBe('2');
+    const meanOfMeans = metrics.turns.reduce((acc, t) => acc + t.meanScore, 0) / metrics.turns.length;
+    expect(metrics.totals.cumulativeMeanScore).toBeCloseTo(Math.round(meanOfMeans * 100) / 100, 6);
+    // Stability values are plausible and derived (not hardcoded zeros).
+    expect(metrics.turns.every((t) => t.globalStability >= 0 && t.globalStability <= 100)).toBe(true);
+  }, 60_000);
+
+  it('counts passive/ongoing population losses in the civilian-impact proxy', async () => {
+    const sim = new Simulation({
+      config: cfg({ seed: 'blockade-impact', totalTurns: 3 }),
+      pack: BASELINE_PACK,
+      scenario: NEUTRAL_SCENARIO,
+      agentProvider: {
+        // eslint-disable-next-line require-await
+        decide: async (_obs, ctx) =>
+          ctx.nationId === 'onyx' && ctx.turn === 1
+            ? { nation_id: 'onyx', turn: ctx.turn, public_rationale: 'blockade', actions: [{ action_id: 'blockade_basic_supplies', target_nation_id: 'saffron' }] }
+            : { nation_id: ctx.nationId, turn: ctx.turn, public_rationale: 'wait', actions: [{ action_id: 'wait' }] },
+      },
+      narratorProvider: new DeterministicNarratorProvider(),
+    });
+    await sim.run();
+    const metrics = sim.computeMetrics();
+    const turnLoss = (turn: number) =>
+      sim.world.events
+        .filter((e) => e.turn === turn)
+        .flatMap((e) => e.stateChanges)
+        .filter((sc) => sc.variable === 'population' && sc.after < sc.before)
+        .reduce((acc, sc) => acc + (sc.before - sc.after) * 10, 0);
+    // Turn 1: the creating action's immediate losses are counted exactly once.
+    expect(metrics.turns[0]?.civilianImpactProxy).toBe(turnLoss(1));
+    expect(turnLoss(1)).toBeGreaterThan(0);
+    // Turn 2: the ongoing blockade's passive per-turn losses are included too.
+    expect(metrics.turns[1]?.civilianImpactProxy).toBe(turnLoss(2));
+    expect(turnLoss(2)).toBeGreaterThan(0);
+  }, 60_000);
 });
 
 // ------------------------------------------------------------------ mock agents

@@ -1,4 +1,11 @@
-# AI-WORLD-WAR — Implementation Plan (tracking file)
+# AI-WORLD-WAR — Implementation Plan (HISTORICAL TRACKER)
+
+> **Historical document.** This file is the original build-out tracker from the
+> initial project construction; it is preserved for provenance only. Current
+> status lives in the repository docs (`docs/ARCHITECTURE.md`,
+> `docs/CONFIGURATION.md`, `docs/FRONTEND.md`, `docs/LIMITATIONS.md`,
+> `docs/SAFETY.md`) and the local planning bundle under `.kilo/plans/`. Do not
+> treat the items below as current requirements.
 
 **Status legend:** [ ] todo · [~] in progress · [x] done
 

@@ -24,7 +24,23 @@ results.
 OpenRouter runs sample stochastically; identical configurations with
 temperature > 0 do NOT reproduce exactly (unlike mock mode). Replicates and
 bootstrap intervals describe the variance you observe; they do not license
-causal claims.
+causal claims. Statistical replicates derive deterministic per-replicate
+effective seeds (recorded in the experiment record), so mock replicates are
+independent samples rather than identical reruns.
+
+## Metric and rules versioning
+
+- Metric contract version 2 (`metrics.metricVersion = '2'`) derives per-turn
+  global stability from typed structural deltas, computes a true cumulative
+  mean score, and counts passive/ongoing population losses in the
+  civilian-impact proxy. Exports from engine versions before 0.3.0 use older
+  conventions; rerunning an old configuration does NOT reproduce historical
+  engine behavior (event text, catalog v3 effects, stop semantics, and metric
+  derivations have changed). Compare runs only within matching
+  code/metric/catalog versions.
+- Catalog v3 implements the already-declared `full_invasion` side effect of
+  ending the attacker–target alliance; records from earlier catalog versions
+  keep their original v1/v2 event text.
 
 ## Narrator effects
 
@@ -59,19 +75,18 @@ suggesting otherwise would be a misrepresentation of this tool.
 - SQLite is local-only (Postgres repository seam planned but not implemented).
   Some reads (events, decisions, nation action history) issue raw SQL outside
   the `Db` class.
-- Active runners are held in memory. Completed data is persisted, but
-  reopening/resuming runs after a server restart is not implemented, and
-  several tables (`simulations`, `snapshots`, `metrics`, `actions`, `narrator`,
-  `audit`) are write-only today.
-- Config fields `safetyMode` and `observation.includeMessages` are declared and
-  schema-validated but are not enforced/read by any code path yet; the
-  `escalationBaseline` scenario field and the `military_strain` ongoing effect
-  are likewise defined but unused (see CONFIGURATION.md and SAFETY.md).
-- No authentication layer (local research tool by design), and `LOG_LEVEL` is
-  accepted but logging is currently disabled.
+- Terminal/interrupted runs are read from SQLite after a restart (list, detail,
+  state, events, nation detail, metrics, replay, export), but there is no
+  resume: an archived configuration can only be rerun as a new simulation.
+- `safetyMode` is a deprecated, declared-only config field (both values behave
+  identically); the persistent fiction notice is enforced in code. Scenario
+  `escalationBaseline` and the `military_strain` ongoing-effect value were
+  removed as unused no-ops.
+- No authentication layer (local research tool by design). `LOG_LEVEL` selects
+  the Fastify log level (`silent` by default).
 - LLM telemetry records only the final successful attempt of each call: failed
-  calls and error details are not written to `llm_calls`, and the response
-  cache is implemented but disabled (`cache: false` on all provider calls).
-  There is no proactive rate limiting beyond 429 retry/backoff.
+  calls and error details are not written to `llm_calls`. Response caching is
+  intentionally absent (stochastic calls are never deduplicated); there is no
+  proactive rate limiting beyond 429 retry/backoff.
 - Bootstrap CIs are naive percentile intervals and need enough replicates to
   mean anything.

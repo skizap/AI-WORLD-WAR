@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { api, type Meta } from './api';
-import { SetupView } from './views/SetupView';
+import { SetupView, type SetupDraft } from './views/SetupView';
 import { LiveView } from './views/LiveView';
 import { NationView } from './views/NationView';
 import { AnalyticsView } from './views/AnalyticsView';
@@ -15,6 +15,7 @@ export function App() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [simId, setSimId] = useState<string | null>(null);
   const [selectedNationId, setSelectedNationId] = useState<ActiveNationId | null>(null);
+  const [setupDraft, setSetupDraft] = useState<SetupDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const tabButtons = useRef(new Map<Tab, HTMLButtonElement>());
 
@@ -34,6 +35,13 @@ export function App() {
   const onViewNation = useCallback((nationId: ActiveNationId) => {
     setSelectedNationId(nationId);
     setTab('Nations');
+  }, []);
+  // Single owner of the selected nation: Live's atlas, Nations, and any other
+  // view share this one piece of state.
+  const onSelectNation = useCallback((nationId: string | null | ((current: string | null) => string | null)) => {
+    setSelectedNationId((current) =>
+      typeof nationId === 'function' ? (nationId(current) as ActiveNationId | null) : (nationId as ActiveNationId | null),
+    );
   }, []);
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, currentTab: Tab) => {
     const currentIndex = TABS.indexOf(currentTab);
@@ -57,9 +65,8 @@ export function App() {
           code v{meta?.codeVersion ?? '?'} · prompts v{meta?.promptVersion ?? '?'} · catalog v{meta?.catalogVersion ?? '?'}
         </span>
       </header>
-      <p className="notice" role="note">
-        RESEARCH SIMULATION with fictional nation identities, actions, and outcomes. The atlas uses recognizable Earth-derived Natural Earth 5.1.1 boundary geometry under fictional aliases; it does not represent real-world actors or changing territory. This is not a forecasting or decision-support system.
-      </p>
+      {/* Canonical persistent fiction notice served by the API (meta.notice). */}
+      {meta?.notice && <p className="notice" role="note">{meta.notice}</p>}
       {error && <p className="notice" role="alert">API error: {error}</p>}
       <nav className="tabs" role="tablist" aria-labelledby="app-title" aria-orientation="horizontal">
         {TABS.map((t) => (
@@ -87,9 +94,17 @@ export function App() {
         tabIndex={0}
       >
         {!meta && !error && <p className="panel muted" role="status">Loading simulation configuration…</p>}
-        {meta && tab === 'Setup' && <SetupView meta={meta} onCreated={onCreated} />}
+        {meta && tab === 'Setup' && (
+          <SetupView meta={meta} draft={setupDraft} onDraftChange={setSetupDraft} onCreated={onCreated} />
+        )}
         {tab === 'Live' && <LiveView key={simId ?? 'auto'} simId={simId} onPick={onPickSimulation} onViewNation={onViewNation} />}
-        {tab === 'Nations' && <NationView simId={simId} initialNationId={selectedNationId} />}
+        {tab === 'Nations' && (
+          <NationView
+            simId={simId}
+            selectedNationId={selectedNationId}
+            onSelectNation={onSelectNation}
+          />
+        )}
         {tab === 'Analytics' && <AnalyticsView simId={simId} />}
         {tab === 'Replay' && <ReplayView simId={simId} onOpenSimulation={openSimulationInLive} />}
       </section>

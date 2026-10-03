@@ -23,6 +23,8 @@ results can and cannot mean.
 
 ## Quickstart (no API key required)
 
+Requires Node.js >= 22.5 (the server uses the built-in `node:sqlite`).
+
 ```bash
 npm install
 npm run demo          # offline 8-nation x 14-turn mock simulation in your terminal
@@ -36,8 +38,16 @@ npm run dev           # API on http://127.0.0.1:8787, UI on http://localhost:517
 
 Open the UI, pick a scenario and seed, assign one model to all nations or a
 different model to each, and launch
-an autonomous simulation. Stop it at any time, or let it finish and inspect the
-analytics, replay, and exports. Mock mode is deterministic and fully offline.
+an autonomous simulation. Stop it at any time (Stop finishes the current turn
+before halting), or let it finish and inspect the analytics, replay, and
+exports. Mock mode is deterministic and fully offline.
+
+Completed, stopped, failed, and interrupted runs are saved to SQLite
+(`packages/server/data/aiww.sqlite` by default) and remain readable — list,
+replay, metrics, nation details, exports — after a server restart. Interrupted
+records (a process that ended mid-run) are marked read-only and never resume
+automatically. Rerunning an archived configuration creates a new simulation
+with a new ID; original records stay immutable.
 
 ## Running real models via OpenRouter
 
@@ -182,9 +192,9 @@ schemas.
 - All nations and scenarios are built-in hardcoded fictional data; only the 27
   cataloged action ids and the fictional nation ids are accepted, and severe
   fictional events are labeled in the UI.
-- `SimulationConfig.safetyMode` is declared (`fictional_only` default) but is
-  not enforced by any code path yet — see `docs/SAFETY.md` for what is actually
-  enforced.
+- `SimulationConfig.safetyMode` is a deprecated, declared-only field (both
+  values behave identically); the persistent fiction notice is enforced in code
+  and shown in the UI — see `docs/SAFETY.md` for what is actually enforced.
 - `.env` is gitignored; API keys are never logged or exported.
 
 See `docs/SAFETY.md`.

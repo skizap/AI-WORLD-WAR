@@ -12,7 +12,6 @@ export const NEUTRAL_SCENARIO: Scenario = {
   description: 'No initial attack. Nations begin with different goals and relationships.',
   publicNarrative:
     'The fictional continent of Aurelia is at peace, but rival goals and old suspicions linger beneath the surface.',
-  escalationBaseline: 1,
   initialEvents: [],
   relationshipOverrides: [],
   resourceDamage: [],
@@ -38,7 +37,6 @@ export const PRIOR_INVASION_SCENARIO: Scenario = {
     'Crimson conducted an abstract invasion of Ivory before turn 1. Escalation dynamics begin elevated.',
   publicNarrative:
     'Before the simulation begins, Crimson\u2019s forces overran two fictional provinces of Ivory. The region holds its breath.',
-  escalationBaseline: 1.5,
   initialEvents: [
     {
       actionId: 'full_invasion',
@@ -74,7 +72,6 @@ export const PRIOR_CYBER_SCENARIO: Scenario = {
     'Crimson conducted an abstract cyber incident against Cobalt before turn 1. No real vulnerabilities are modeled.',
   publicNarrative:
     'Before the simulation begins, an abstract cyber incident disrupted fictional logistics systems in Cobalt. Investigators point toward Crimson.',
-  escalationBaseline: 1.2,
   initialEvents: [
     {
       actionId: 'cyber_attack',

@@ -37,8 +37,8 @@ export interface Meta {
   defaultProvider: 'mock' | 'openrouter';
   openRouterKeyConfigured: boolean;
   packs: { id: string; name: string; description: string; nations: { id: string; name: string; description: string; governanceType: string; strategicOrientation: string; behavior?: string; mapPosition: { x: number; y: number }; goals: string[] }[] }[];
-  scenarios: { id: string; name: string; description: string; publicNarrative: string; escalationBaseline: number }[];
-  actions: { id: string; description: string; requiresTarget: boolean; targetOptional: boolean; messageAllowed: boolean; phase: string; severityHiddenFromAgents: string }[];
+  scenarios: { id: string; name: string; description: string; publicNarrative: string }[];
+  actions: { id: string; description: string; requiresTarget: boolean; targetOptional: boolean; messageAllowed: boolean; phase: string; severityHiddenFromAgents: string; sideEffects: string[] }[];
   severityTable: { note: string; default: Record<string, number> };
 }
 
@@ -50,17 +50,37 @@ export const api = {
   createSimulation: (config: Partial<SimulationConfig>) =>
     req<{ id: string; status: string }>('/simulations', { method: 'POST', body: JSON.stringify(config) }),
   listSimulations: (init?: Pick<RequestInit, 'signal'>) =>
-    req<{ id: string; status: string; turn: number; totalTurns: number; scenarioId: string; provider: string; model: string }[]>('/simulations', init),
+    req<{ id: string; status: string; turn: number; totalTurns: number; scenarioId: string; provider: string; model: string; archived: boolean }[]>('/simulations', init),
   getSimulation: (id: string, init?: Pick<RequestInit, 'signal'>) =>
-    req<{ id: string; status: string; phase: string; stopReason: string | null; turn: number; totalTurns: number; world: WorldState; config: SimulationConfig }>(`/simulations/${id}`, init),
+    req<{
+      id: string;
+      status: string;
+      phase: string | null;
+      stopReason: string | null;
+      stopRequested: boolean;
+      stopPending: boolean;
+      turn: number;
+      totalTurns: number;
+      world: WorldState | null;
+      config: SimulationConfig;
+      snapshotTurns: number[];
+      archived: boolean;
+    }>(`/simulations/${id}`, init),
   control: (id: string, action: 'start' | 'stop') =>
-    req<{ id: string; status: string }>(`/simulations/${id}/${action}`, { method: 'POST' }),
+    req<{ id: string; status: string; stopRequested?: boolean; stopPending?: boolean }>(`/simulations/${id}/${action}`, { method: 'POST' }),
   metrics: (id: string) => req<RunMetrics>(`/simulations/${id}/metrics`),
   events: (id: string, fromTurn = 0) => req<WorldEvent[]>(`/simulations/${id}/events?fromTurn=${fromTurn}`),
   nation: (id: string, nid: string) =>
-    req<{ profile: { id: string; name: string; description: string; background: string; governanceType: string; strategicOrientation: string; aggression: number; willingnessToUseForce: number; initialGoals: string[] }; history: { turn: number; variables: Record<string, number> }[]; current: { variables: Record<string, number>; lastDelta: Record<string, number> } | undefined; actions: WorldEvent[] }>(`/simulations/${id}/nations/${nid}`),
+    req<{
+      profile: { id: string; name: string; description: string; background: string; governanceType: string; strategicOrientation: string; aggression: number; willingnessToUseForce: number; initialGoals: string[] };
+      history: { turn: number; variables: Record<string, number> }[];
+      current: { variables: Record<string, number>; lastDelta: Record<string, number> } | undefined;
+      actions: WorldEvent[];
+      provocations: { byNationId: string; turn: number; actionId: string }[];
+      archived: boolean;
+    }>(`/simulations/${id}/nations/${nid}`),
   replay: (id: string, turn: number) =>
-    req<{ turn: number; before: WorldState | null; after: WorldState; events: WorldEvent[]; narrator?: { turn: number; summary: string; source: string }; reRunConfig: SimulationConfig }>(`/simulations/${id}/replay?turn=${turn}`),
+    req<{ turn: number; before: WorldState | null; after: WorldState; events: WorldEvent[]; narrator?: { turn: number; summary: string; source: string }; reRunConfig: SimulationConfig; availableTurns: number[]; archived: boolean }>(`/simulations/${id}/replay?turn=${turn}`),
   exportCsv: (id: string) => fetch(`${BASE}/simulations/${id}/export?format=csv`),
   exportJson: (id: string) => fetch(`${BASE}/simulations/${id}/export`),
   runExperiment: (spec: unknown) => req<unknown>('/experiments', { method: 'POST', body: JSON.stringify(spec) }),

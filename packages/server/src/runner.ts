@@ -52,6 +52,35 @@ export class SimRunner {
     return this.sim.status;
   }
 
+  /** A stop has been requested but the current turn is still finishing. */
+  get stopPending(): boolean {
+    return this.sim.stopRequested && this.status === 'running';
+  }
+
+  get turn(): number {
+    return this.sim.world.turn;
+  }
+
+  get totalTurns(): number {
+    return this.sim.config.totalTurns;
+  }
+
+  get config(): SimulationConfig {
+    return this.sim.config;
+  }
+
+  snapshotTurns(): number[] {
+    return this.sim.snapshotTurns();
+  }
+
+  getSnapshot(turn: number): WorldState | undefined {
+    return this.sim.getSnapshot(turn);
+  }
+
+  allSnapshots(): WorldState[] {
+    return this.sim.allSnapshots();
+  }
+
   private persistRow(): void {
     const now = new Date().toISOString();
     const c = this.sim.config;
@@ -174,12 +203,21 @@ export class SimRunner {
     try {
       while (this.sim.status !== 'completed' && this.sim.status !== 'stopped' && this.sim.status !== 'failed') {
         await this.sim.step();
-        this.persistDelta();
-        this.persistNewSnapshots();
+        // Each turn's events/decisions/snapshot/metrics persist atomically so a
+        // crash cannot claim a fully saved turn when only some records landed.
+        this.db.withTransaction(() => {
+          this.persistDelta();
+          this.persistNewSnapshots();
+        });
       }
     } catch (err) {
-      this.sim.status = 'failed';
-      this.sim.stopReason = err instanceof Error ? err.message : String(err);
+      // Failures finalize as explicit, immutable partial records; everything
+      // persisted before the failure stays readable.
+      this.sim.finalizeFailure(err instanceof Error ? err.message : String(err));
+      this.db.withTransaction(() => {
+        this.persistDelta();
+        this.persistNewSnapshots();
+      });
     } finally {
       this.running = false;
       this.persistRow();
@@ -201,9 +239,18 @@ export class SimRunner {
     }
   }
 
+  /** Set the runtime stop flag and persist the request without prematurely
+   * writing a terminal status. The current turn is finished and persisted by
+   * the engine before the run finalizes as stopped; repeated requests are
+   * idempotent. */
   stop(): void {
     this.sim.requestStop();
-    this.persistRow();
+    if (this.status !== 'running' || this.sim.stopRequested) {
+      // Only persist non-terminal bookkeeping while the stop is pending.
+      if (this.sim.status !== 'completed' && this.sim.status !== 'stopped' && this.sim.status !== 'failed') {
+        this.persistRow();
+      }
+    }
   }
 
   private persistMetrics(turn: number): void {
@@ -219,11 +266,25 @@ export class SimRunner {
 
 export class RunnerManager {
   private runners = new Map<string, SimRunner>();
+  /** Terminal runners kept in memory for fast reads; older ones are evicted
+   * once SQLite reads are authoritative for them. */
+  private static TERMINAL_RETENTION = 8;
 
   constructor(
     private readonly db: Db,
     private readonly client: OpenRouterClient | null,
   ) {
+    // Runs whose process ended while still marked `running` become explicit,
+    // read-only interrupted records; no agent loop is ever resumed.
+    const now = new Date().toISOString();
+    const stale = this.db.all<{ id: string }>(`SELECT id FROM simulations WHERE status = 'running'`);
+    for (const row of stale) {
+      this.db.exec(
+        `UPDATE simulations SET status = 'interrupted', updated_at = ? WHERE id = ? AND status = 'running'`,
+        now,
+        row.id,
+      );
+    }
     // LLM telemetry -> llm_calls table (never contains secrets or raw prompts).
     onLlmCall((audit) => {
       const a = audit as Record<string, unknown>;
@@ -252,6 +313,21 @@ export class RunnerManager {
     });
   }
 
+  private static isTerminal(status: SimulationStatus): boolean {
+    return status === 'completed' || status === 'stopped' || status === 'failed';
+  }
+
+  /** Evict the oldest terminal runners beyond the bounded retention window.
+   * Map iteration order is insertion order, so the earliest created terminal
+   * runners are evicted first. */
+  private evictTerminal(): void {
+    const terminal = [...this.runners.entries()].filter(([, r]) => RunnerManager.isTerminal(r.status));
+    if (terminal.length <= RunnerManager.TERMINAL_RETENTION) return;
+    for (const [id] of terminal.slice(0, terminal.length - RunnerManager.TERMINAL_RETENTION)) {
+      this.runners.delete(id);
+    }
+  }
+
   create(config: SimulationConfig): SimRunner {
     const id = `sim_${computeConfigHash(config).slice(0, 8)}_${randomUUID().slice(0, 8)}`;
     if (config.provider === 'openrouter' && (!this.client || !this.client.apiKeyPresent)) {
@@ -260,20 +336,23 @@ export class RunnerManager {
     const runner = new SimRunner(id, config, this.db, this.client);
     runner.create();
     this.runners.set(id, runner);
+    this.evictTerminal();
     return runner;
   }
 
   get(id: string): SimRunner | undefined {
+    this.evictTerminal();
     return this.runners.get(id);
   }
 
   require(id: string): SimRunner {
-    const r = this.runners.get(id);
+    const r = this.get(id);
     if (!r) throw new Error(`Unknown simulation: ${id}`);
     return r;
   }
 
   list(): SimRunner[] {
+    this.evictTerminal();
     return [...this.runners.values()];
   }
 }

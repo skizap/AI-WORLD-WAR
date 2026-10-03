@@ -1,25 +1,31 @@
 import { useEffect, useState } from 'react';
 import { api, VARIABLE_LABELS } from '../api';
+import { ACTIVE_NATION_NAMES, type ActiveNationId } from '../atlas/types';
 
 type ReplayData = Awaited<ReturnType<typeof api.replay>>;
 
 type SimulationState =
   | { simId: string; status: 'loading' }
-  | { simId: string; status: 'success'; totalTurns: number }
+  | { simId: string; status: 'success'; totalTurns: number; snapshotTurns: number[]; archived: boolean; runStatus: string }
   | { simId: string; status: 'error'; message: string };
 
 type ReplayState =
   | { simId: string; turn: number; status: 'loading' }
   | { simId: string; turn: number; status: 'success'; data: ReplayData }
+  | { simId: string; turn: number; status: 'pending'; availableTurns: number[] }
   | { simId: string; turn: number; status: 'error'; message: string };
 
 type ReRunResult =
   | { status: 'success'; id: string; simId: string; turn: number }
   | { status: 'error'; message: string; simId: string; turn: number };
 
+type ActionMeta = Awaited<ReturnType<typeof api.meta>>['actions'][number];
+
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
+
+const NO_SNAPSHOT_CODE = 'no_snapshot';
 
 export function ReplayView({
   simId,
@@ -40,18 +46,38 @@ export function ReplayView({
   const [creatingReRun, setCreatingReRun] = useState(false);
   const [creatingSource, setCreatingSource] = useState<{ simId: string; turn: number } | null>(null);
   const [reRunResult, setReRunResult] = useState<ReRunResult | null>(null);
+  const [actionMeta, setActionMeta] = useState<ActionMeta[] | null>(null);
 
-  const selectedTurn = turnSelection.simId === simId ? turnSelection.turn : 1;
   const simulation = simulationState && simulationState.simId === simId ? simulationState : null;
+  const snapshotTurns = simulation?.status === 'success' ? simulation.snapshotTurns.filter((t) => t > 0) : [];
+  const maxSnapshotTurn = snapshotTurns.length > 0 ? Math.max(...snapshotTurns) : 0;
   const totalTurns = simulation?.status === 'success' ? Math.max(1, simulation.totalTurns) : 1;
-  const turn = Math.min(selectedTurn, totalTurns);
-  const replay = replayState && replayState.simId === simId && replayState.turn === turn
-    ? replayState
-    : null;
+  const requestedTurn = turnSelection.simId === simId ? turnSelection.turn : 1;
+  const turn = Math.min(requestedTurn, Math.max(totalTurns, 1));
+  const replay = replayState && replayState.simId === simId && replayState.turn === turn ? replayState : null;
   const replayData = replay?.status === 'success' ? replay.data : null;
+  const replayPending = replay?.status === 'pending';
   const simulationLoading = !!simId && (!simulation || simulation.status === 'loading');
   const replayLoading = !!simId && (!replay || replay.status === 'loading');
-  const canScrub = simulation?.status === 'success';
+  const canScrub = snapshotTurns.length > 0;
+
+  useEffect(() => {
+    let active = true;
+    api.meta().then((meta) => {
+      if (active) setActionMeta(meta.actions);
+    }).catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const actionLabel = (actionId: string | undefined): string => {
+    if (!actionId) return '';
+    const entry = actionMeta?.find((a) => a.id === actionId);
+    return entry ? entry.description : actionId;
+  };
+  const nationLabel = (id: string | undefined): string =>
+    id ? (ACTIVE_NATION_NAMES[id as ActiveNationId] ?? id) : 'world';
 
   useEffect(() => {
     if (!simId) {
@@ -69,7 +95,10 @@ export function ReplayView({
         setSimulationState({
           simId,
           status: 'success',
-          totalTurns: Math.max(1, simulationDetails.world.turn),
+          totalTurns: Math.max(1, simulationDetails.totalTurns ?? simulationDetails.world?.totalTurns ?? 1),
+          snapshotTurns: simulationDetails.snapshotTurns ?? [],
+          archived: simulationDetails.archived,
+          runStatus: simulationDetails.status,
         });
       })
       .catch((error: unknown) => {
@@ -106,18 +135,21 @@ export function ReplayView({
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setReplayState({
-          simId,
-          turn,
-          status: 'error',
-          message: errorMessage(error, 'Unable to load this turn replay.'),
-        });
+        const message = errorMessage(error, 'Unable to load this turn replay.');
+        // A turn without a stored snapshot is a pending/unavailable state,
+        // explicitly distinct from an unknown simulation or a storage failure.
+        if (message.toLowerCase().includes('no snapshot')) {
+          setReplayState({ simId, turn, status: 'pending', availableTurns: snapshotTurns });
+        } else {
+          setReplayState({ simId, turn, status: 'error', message });
+        }
       });
 
     return () => {
       active = false;
     };
-  }, [simId, turn, replayRetry]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simId, turn, replayRetry, snapshotTurns.length]);
 
   if (!simId) {
     return <p className="muted" role="status">Select or create a simulation to inspect its replay.</p>;
@@ -130,8 +162,9 @@ export function ReplayView({
   const varNames = Object.keys(VARIABLE_LABELS);
 
   const delta = (nid: string, v: string): string => {
-    const b = (before?.nations[nid]?.variables as Record<string, number> | undefined)?.[v] ?? 0;
+    const b = (before?.nations[nid]?.variables as Record<string, number> | undefined)?.[v];
     const a = (after?.nations[nid]?.variables as Record<string, number> | undefined)?.[v] ?? 0;
+    if (b === undefined) return `— → ${Math.round(a * 10) / 10} (unknown before)`;
     const d = Math.round((a - b) * 10) / 10;
     return `${Math.round(b * 10) / 10} → ${Math.round(a * 10) / 10} (${d > 0 ? '+' : ''}${d})`;
   };
@@ -181,7 +214,7 @@ export function ReplayView({
           id="replay-turn"
           type="range"
           min={1}
-          max={totalTurns}
+          max={Math.max(totalTurns, maxSnapshotTurn)}
           value={turn}
           onChange={(event) => selectTurn(Number(event.target.value))}
           disabled={!canScrub}
@@ -202,6 +235,11 @@ export function ReplayView({
           </button>
           <span className="muted">same seed + config ⇒ identical replay (mock mode)</span>
         </div>
+        {canScrub && (
+          <p className="muted">
+            Completed turns available: {snapshotTurns.join(', ') || 'none yet'}
+          </p>
+        )}
 
         {simulationLoading && <p className="muted" role="status" aria-busy="true">Loading simulation details…</p>}
         {simulation?.status === 'error' && (
@@ -209,6 +247,10 @@ export function ReplayView({
             <p role="alert" className="notice">Unable to load simulation details: {simulation.message}</p>
             <button type="button" onClick={retrySimulation}>Retry simulation details</button>
           </div>
+        )}
+
+        {simulation?.status === 'success' && simulation.runStatus === 'idle' && (
+          <p role="status" className="muted">This run has not started yet; no turn snapshots exist to replay.</p>
         )}
 
         {confirmingReRun && replayData && (
@@ -242,6 +284,12 @@ export function ReplayView({
       </section>
 
       {replayLoading && <p className="muted" role="status" aria-busy="true">Loading replay for turn {turn}…</p>}
+      {replayPending && (
+        <p className="muted" role="status">
+          Turn {turn} has no stored snapshot yet — the scrubber covers completed turns only
+          {snapshotTurns.length > 0 ? ` (up to turn ${maxSnapshotTurn}).` : '; this run has not completed any turn.'}
+        </p>
+      )}
       {replay?.status === 'error' && (
         <div>
           <p role="alert" className="notice">Unable to load replay for turn {turn}: {replay.message}</p>
@@ -261,7 +309,7 @@ export function ReplayView({
                 ) : nationIds.flatMap((nid) =>
                   varNames.slice(0, 5).map((v) => (
                     <tr key={`${nid}:${v}`}>
-                      <td>{nid}</td>
+                      <td>{ACTIVE_NATION_NAMES[nid as ActiveNationId] ?? nid}</td>
                       <td>{VARIABLE_LABELS[v]}</td>
                       <td>{delta(nid, v)}</td>
                     </tr>
@@ -269,6 +317,9 @@ export function ReplayView({
                 )}
               </tbody>
             </table>
+            {!before && (
+              <p className="muted">No prior snapshot exists before the first turn, so the “before” column is unknown rather than zero.</p>
+            )}
           </section>
 
           <section className="panel">
@@ -278,8 +329,11 @@ export function ReplayView({
                 <p className="muted" role="status">No action-resolution events for this turn.</p>
               ) : actionEvents.map((event) => (
                 <div key={event.id} className={`event ${event.status}`}>
-                  <span className="badge info">{event.actorId ?? 'world'}</span>{' '}
-                  {event.status === 'rejected' ? `REJECTED ${event.actionId} — ${event.reason}` : `${event.actionId ?? event.type}${event.targetId ? ` → ${event.targetId}` : ''}`}
+                  <span className="badge info">{nationLabel(event.actorId)}</span>{' '}
+                  {event.status === 'rejected'
+                    ? `REJECTED ${event.actionId ? `${actionLabel(event.actionId)} (${event.actionId})` : 'action'}${event.targetId ? ` → ${nationLabel(event.targetId)}` : ''} — ${event.reason}`
+                    : `${event.actionId ? `${actionLabel(event.actionId)} (${event.actionId})` : event.type}${event.targetId ? ` → ${nationLabel(event.targetId)}` : ''}`}
+                  {event.message && <span className="muted"> · “{event.message}”</span>}
                 </div>
               ))}
             </div>

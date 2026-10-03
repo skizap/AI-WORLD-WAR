@@ -4,11 +4,11 @@
  * Base URL /chat/completions /models per https://openrouter.ai/docs/quickstart.
  * Supports per-role model selection, timeouts, retries with exponential
  * backoff, rate-limit handling, structured output where supported (with
- * JSON-instructions fallback + audit), request deduplication/response caching,
- * token/latency/request-id capture, and provider-error normalization.
+ * JSON-instructions fallback + audit), token/latency/request-id capture, and
+ * provider-error normalization. Response caching is intentionally absent:
+ * stochastic agent and narrator calls must never be deduplicated.
  * API keys are never logged and never serialized into audit records.
  */
-import { createHash } from 'node:crypto';
 import type { LlmCallAudit } from '@aiww/schemas';
 import type { Env } from './config.js';
 
@@ -27,8 +27,6 @@ export interface ChatOptions {
   turn: number;
   /** Attempt structured JSON output; falls back to instructions if unsupported. */
   jsonMode?: boolean;
-  /** Deterministic utility calls may opt in; stochastic agent calls do not. */
-  cache?: boolean;
 }
 
 export interface ChatResult {
@@ -47,14 +45,8 @@ export class OpenRouterError extends Error {
   }
 }
 
-interface CachedEntry {
-  expiresAt: number;
-  result: ChatResult;
-}
-
 export class OpenRouterClient {
   private catalogCache: { expiresAt: number; models: OpenRouterModelInfo[] } | null = null;
-  private responseCache = new Map<string, CachedEntry>();
   private jsonModeUnsupported = new Set<string>();
 
   constructor(private readonly env: Env) {}
@@ -72,33 +64,10 @@ export class OpenRouterClient {
     };
   }
 
-  private cacheKey(model: string, messages: ChatMessage[], opts: ChatOptions): string {
-    return createHash('sha256')
-      .update(
-        JSON.stringify({
-          m: model,
-          c: messages.map((x) => x.role + ':' + createHash('sha256').update(x.content).digest('hex').slice(0, 16)),
-          t: opts.temperature,
-          x: opts.maxTokens,
-          j: opts.jsonMode && !this.jsonModeUnsupported.has(model),
-          s: opts.simulationId,
-        }),
-      )
-      .digest('hex');
-  }
-
   /** Single chat completion with retries + backoff. Never throws raw fetch errors. */
   async chat(messages: ChatMessage[], opts: ChatOptions): Promise<ChatResult> {
     const model = opts.model;
-    const key = this.cacheKey(model, messages, opts);
-    const cached = opts.cache ? this.responseCache.get(key) : undefined;
     const now = Date.now();
-    if (cached && cached.expiresAt > now) {
-      return {
-        ...cached.result,
-        audit: { ...cached.result.audit, status: 'cache_hit', latencyMs: 0 },
-      };
-    }
 
     if (!this.apiKeyPresent) {
       throw new OpenRouterError('OPENROUTER_API_KEY is not configured; switch to mock mode or set the key.');
@@ -166,11 +135,7 @@ export class OpenRouterClient {
           retries,
           status: retries > 0 ? 'ok' : 'ok',
         };
-        const result: ChatResult = { content, raw: json, audit, usedFallback: false };
-        if (opts.cache) {
-          this.responseCache.set(key, { expiresAt: now + this.env.OPENROUTER_RESPONSE_CACHE_TTL_MS, result });
-        }
-        return result;
+        return { content, raw: json, audit, usedFallback: false };
       } catch (err) {
         if (err instanceof OpenRouterError) throw err;
         lastError = new OpenRouterError(err instanceof Error ? err.message : String(err));

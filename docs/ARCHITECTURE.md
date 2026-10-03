@@ -21,7 +21,7 @@ RESEARCH SIMULATION — fictional nations and synthetic research parameters only
 │                      packages/engine (pure TS)               │
 │  Simulation turn loop · validation · transitions · scoring   │
 │  metrics · observation · mock providers · data registry      │
-│  (27-action catalog, 8-nation pack, 3 scenarios)             │
+│  (27-action catalog v3, 8-nation pack, 4 scenarios)          │
 └───────────────────────────────┬──────────────────────────────┘
                                 │ shared types
 ┌───────────────────────────────▼──────────────────────────────┐
@@ -35,8 +35,6 @@ RESEARCH SIMULATION — fictional nations and synthetic research parameters only
 2. **Observation** built per nation from `WorldState` under the configured
    ablations (`observation.includeHistory`, `includeGoals`, `stateMode:
    full|deltas`, `severityVisibility`, `framing`, `includeNarratorSummaries`).
-   `observation.includeMessages` is accepted by the config schema but is not
-   read anywhere yet: messages are never included in observations.
 3. **Agent provider** (mock or OpenRouter) returns strict JSON.
 4. **Validation** (`packages/engine/src/validation.ts`) runs in this order:
    response schema → nation match → turn match → disallowed-content scan of
@@ -50,9 +48,14 @@ RESEARCH SIMULATION — fictional nations and synthetic research parameters only
 5. **Resolution** runs autonomously in fixed phase order (diplomatic →
    economic → military), by turn-order rank within each phase. Preconditions
    are re-checked against current state; failures are recorded as rejections.
-   Effects apply through `applyEffects()` only — clamped, before/after
-   recorded, audited.
-6. **Second-order reactions** (alliance solidarity, extra trust collapse).
+   Effects apply through `applyEffects()` only — clamped, with typed
+   before/after deltas for nation variables, relationship dimensions, and
+   world-level structure (`structuralChanges`: global stability, alliance
+   records, dispute identity, intelligence sharing, ongoing effects,
+   provocations). Every mutating or rejected event is audited exactly once
+   through `addEvent()`.
+6. **Second-order reactions** (alliance solidarity, extra trust collapse),
+   each recorded as its own audited event.
 7. **Passive mechanics** (growth/decay/recovery/ongoing effects/alliance
    maintenance), then global clamp.
 8. **Narrator** (LLM or deterministic fallback) summarizes validated deltas;
@@ -60,8 +63,29 @@ RESEARCH SIMULATION — fictional nations and synthetic research parameters only
    by default and is fed back only in the explicit
    `includeNarratorSummaries` ablation.
 9. **Snapshot + metrics**: the engine records a snapshot per turn in memory
-   and exposes `computeMetrics()`; the server runner persists snapshots and
-   metrics to SQLite and evaluates **stop conditions**.
+   and exposes `computeMetrics()` (metric contract version 2: per-turn global
+   stability from typed deltas, a true cumulative mean score, and a
+   civilian-impact proxy that includes passive/ongoing population losses);
+   the server runner persists snapshots and metrics to SQLite and evaluates
+   **stop conditions**.
+
+## Run lifecycle
+
+- `requestStop()` is an idempotent runtime flag: the current turn finishes
+  and is persisted, then the run finalizes as `stopped`. A begun turn with
+  no recorded progress is rewound so `world.turn` never points at an
+  unreplayable partial turn. Stop requests on terminal runs are no-ops —
+  terminal statuses are immutable.
+- Failures finalize as explicit `failed` partial records with an auditable
+  system event; all previously persisted turns stay readable.
+- Alliance state has one canonical representation: the global
+  `world.alliances` records and both directed relationship entries are
+  reconciled after every alliance mutation, including the baseline pact from
+  fiction packs and the alliance-termination declared for `full_invasion`
+  (catalog v3).
+- Experiment replicates derive deterministic per-replicate effective seeds
+  (`seed` for replicate 0, `seed#rN` for later replicates), recorded in the
+  experiment record, so mock replicates are independent samples.
 
 ## Determinism
 
@@ -80,13 +104,19 @@ RESEARCH SIMULATION — fictional nations and synthetic research parameters only
 SQLite (node:sqlite) tables: `simulations`, `snapshots` (full world JSON per
 turn), `events`, `actions`, `decisions`, `narrator`, `metrics`, `llm_calls`
 (telemetry only — no secrets, no raw prompts), `experiments`, `audit`.
+Per-turn persistence is transactional (events/decisions + snapshot + metrics
+land together), so a turn never looks fully saved when only some records
+landed.
 
 Active runs live in memory (`RunnerManager`); the database is the durable
-record. Several tables are currently write-only (`simulations`, `snapshots`,
-`metrics`, `actions`, `narrator`, `audit`): there is no restart/resume path
-and no DB-backed read API yet. The `Db` class is a repository-style seam; a
-PostgreSQL implementation can replace it without touching the engine, though a
-few read queries in the server currently use raw SQL directly.
+record **and the read source for runs after a server restart**: list, detail,
+state, events, nation detail, metrics, replay, and export all fall back to
+SQLite for archived runs. On startup, rows still marked `running` become
+`interrupted` read-only records (no agent loop is ever resumed). Terminal
+runners are retained in memory within a small bounded window; older terminal
+runs are evicted and served from SQLite. Re-running an archived
+configuration means creating a new simulation from its saved configuration —
+the record itself is immutable.
 
 ## Turn-order semantics
 

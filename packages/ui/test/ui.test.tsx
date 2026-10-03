@@ -7,10 +7,10 @@ import { api } from '../src/api';
 import { afterEach } from 'vitest';
 
 const META = {
-  notice: 'RESEARCH SIMULATION with FICTIONAL nations.',
-  codeVersion: '0.2.0',
+  notice: 'RESEARCH SIMULATION with fictional nation identities, actions, and outcomes. This is not a forecasting or decision-support system.',
+  codeVersion: '0.3.0',
   promptVersion: '1.1.0',
-  catalogVersion: 2,
+  catalogVersion: 3,
   defaultProvider: 'mock',
   openRouterKeyConfigured: false,
   defaultConfig: {
@@ -23,7 +23,7 @@ const META = {
     models: { nationAgent: 'openai/gpt-4o-mini', nationAgents: {}, worldNarrator: 'openai/gpt-4o-mini', repair: 'openai/gpt-4o-mini' },
     temperature: 0.7,
     maxTokens: 1024,
-    observation: { includeHistory: true, includeGoals: true, includeMessages: true, stateMode: 'full', severityVisibility: 'hidden', framing: 'neutral', includeNarratorSummaries: false },
+    observation: { includeHistory: true, includeGoals: true, stateMode: 'full', severityVisibility: 'hidden', framing: 'neutral', includeNarratorSummaries: false },
     limits: { nonMessagePerTurn: 3, messagePerTurn: 4, maxMessageLength: 280, maxRationaleLength: 1000, allowDuplicates: false },
     scoring: { scheme: 'default' },
     narratorEnabled: true,
@@ -33,13 +33,13 @@ const META = {
     safetyMode: 'fictional_only',
   },
   packs: [{
-    id: 'baseline_8', name: 'Baseline Aurelia-8 (fictional)', description: 'd',
+    id: 'baseline_8', name: 'Baseline Aurelia-8 (fictional)', description: 'Eight fictional nations at a calm baseline.',
     nations: ['amber', 'cobalt', 'crimson', 'ivory', 'jade', 'mauve', 'onyx', 'saffron'].map((id) => ({
       id, name: id[0].toUpperCase() + id.slice(1), description: 'd', governanceType: 'democracy',
       strategicOrientation: 'mixed', mapPosition: { x: 0, y: 0 }, goals: [],
     })),
   }],
-  scenarios: [{ id: 'neutral', name: 'Neutral start (fictional)', description: 'd', publicNarrative: 'n', escalationBaseline: 1 }],
+  scenarios: [{ id: 'neutral', name: 'Neutral start (fictional)', description: 'Eight nations at baseline relations.', publicNarrative: 'n' }],
   actions: [],
   severityTable: { note: 'n', default: {} },
 };
@@ -79,13 +79,34 @@ describe('UI smoke checks', () => {
 
   it('renders the simulation notice and creates without a blocking acknowledgment', async () => {
     render(<App />);
-    await waitFor(() => screen.getByText(/RESEARCH SIMULATION with fictional nation identities/));
+    await waitFor(() => screen.getByText(/RESEARCH SIMULATION with fictional nation identities/)); // canonical meta.notice
     expect(screen.getByRole('tab', { name: 'Setup' })).toBeTruthy();
     const createBtn = await waitFor(() => screen.getByRole('button', { name: /Create simulation/ })) as HTMLButtonElement;
     expect(createBtn.disabled).toBe(false);
     expect(screen.getByRole('button', { name: /Apply to all nations/ })).toBeTruthy();
     expect(screen.getByLabelText('Amber model')).toBeTruthy();
     expect(screen.getByLabelText('Saffron model')).toBeTruthy();
+  });
+
+  it('shows scenario/pack descriptions, threshold semantics, and the effective run summary', async () => {
+    render(<App />);
+    await waitFor(() => screen.getByText(/Eight nations at baseline relations\./));
+    expect(screen.getByText(/Scenario relationship overrides take precedence over the pack baseline/)).toBeTruthy();
+    expect(screen.getByText(/BELOW this value/)).toBeTruthy(); // population threshold direction
+    expect(screen.getByText(/MORE than this many accepted violent/)).toBeTruthy(); // violent stop semantics
+    expect(screen.getByText(/Effective run:/)).toBeTruthy();
+    expect(screen.getByText(/Estimated model requests/)).toBeTruthy();
+  });
+
+  it('exposes editable custom scoring weights only for the custom scheme', async () => {
+    render(<App />);
+    await waitFor(() => screen.getByRole('button', { name: /Create simulation/ }));
+    expect(screen.queryByLabelText('Nuclear escalation', { selector: 'input' })).toBeNull();
+    const scheme = screen.getByLabelText('Scoring scheme') as HTMLSelectElement;
+    scheme.value = 'custom';
+    scheme.dispatchEvent(new Event('change', { bubbles: true }));
+    await waitFor(() => screen.getByLabelText('Nuclear escalation', { selector: 'input' }));
+    expect(screen.getByLabelText('De-escalation', { selector: 'input' })).toBeTruthy();
   });
 
   it('renders tab navigation across all five views', async () => {

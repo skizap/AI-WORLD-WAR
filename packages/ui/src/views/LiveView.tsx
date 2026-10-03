@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { WorldEvent, WorldState } from '@aiww/schemas';
+import type { StructuralChange, WorldEvent, WorldState } from '@aiww/schemas';
 import { api, SEVERITY_TEXT, VARIABLE_LABELS } from '../api';
 import { AtlasMap } from '../atlas/AtlasMap';
 import { eventKey, isVisualAction, mergeEventSnapshot, orderWorldEvents } from '../atlas/events';
@@ -23,6 +23,28 @@ function nationLabel(id?: string): string {
   return ACTIVE_NATION_NAMES[id as ActiveNationId] ?? id;
 }
 
+/** Human-readable label for a typed world-level structural delta. */
+function structuralChangeLabel(change: StructuralChange): string {
+  switch (change.kind) {
+    case 'global_stability':
+      return `Global fictional stability: ${change.before} → ${change.after}`;
+    case 'alliance':
+      return `Alliance ${change.members.join(' + ')}: ${change.before} → ${change.after}`;
+    case 'dispute_added':
+      return `Dispute opened (${change.disputeId}): ${change.subject}`;
+    case 'dispute_resolved':
+      return `Dispute resolved (${change.disputeId}): ${change.subject}`;
+    case 'intelligence_sharing':
+      return `Intelligence sharing ${change.pairKey}: ${change.before ? 'active' : 'inactive'} → ${change.after ? 'active' : 'inactive'}`;
+    case 'ongoing_effect_added':
+      return `Ongoing effect ${change.effect} on ${nationLabel(change.targetId)} (${change.remainingTurns} turns)`;
+    case 'ongoing_effect_removed':
+      return `Ongoing effect ${change.effect} removed`;
+    case 'provocation_added':
+      return `Provocation recorded by ${nationLabel(change.byNationId)} (turn ${change.turn})`;
+  }
+}
+
 function eventSummary(event: WorldEvent): string {
   const actor = nationLabel(event.actorId);
   const target = event.targetId ? ` → ${nationLabel(event.targetId)}` : '';
@@ -44,7 +66,8 @@ export function LiveView({
   const [sims, setSims] = useState<SimulationListItem[]>([]);
   const [world, setWorld] = useState<WorldState | null>(null);
   const [status, setStatus] = useState('');
-  const [phase, setPhase] = useState('');
+  const [phase, setPhase] = useState<string | null>('');
+  const [stopPending, setStopPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [controlBusy, setControlBusy] = useState(false);
   const [eventStream, setEventStream] = useState<EventStream>(() => ({ simId, events: [], hydrated: false }));
@@ -60,6 +83,8 @@ export function LiveView({
   const eventStreamRef = useRef<EventStream>({ simId, events: [], hydrated: false });
   const queueRef = useRef<WorldEvent[]>([]);
   const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  /** When set, visual playback walks through every event of that turn before pausing. */
+  const steppingTurnRef = useRef<number | null>(null);
 
   const events = eventStream.simId === simId ? eventStream.events : [];
 
@@ -70,6 +95,7 @@ export function LiveView({
     const initialStream: EventStream = { simId, events: [], hydrated: false };
     eventStreamRef.current = initialStream;
     queueRef.current = [];
+    steppingTurnRef.current = null;
     setEventStream(initialStream);
     setQueue([]);
     setVisualEvent(null);
@@ -77,6 +103,7 @@ export function LiveView({
     setWorld(null);
     setStatus('');
     setPhase('');
+    setStopPending(false);
     setError(null);
     setIsPlaying(true);
     setPlaybackSpeed(1);
@@ -93,6 +120,7 @@ export function LiveView({
           setWorld(null);
           setStatus('');
           setPhase('');
+          setStopPending(false);
           const empty: EventStream = { simId: null, events: [], hydrated: true };
           eventStreamRef.current = empty;
           setEventStream(empty);
@@ -104,20 +132,31 @@ export function LiveView({
         setWorld(simulation.world);
         setStatus(simulation.status);
         setPhase(simulation.phase);
+        setStopPending(simulation.stopPending);
         setError(null);
+
+        // Historical (archived) runs are served from SQLite: world may be null
+        // and the event stream comes from the persisted events endpoint.
+        let snapshot: WorldEvent[];
+        if (simulation.world) {
+          snapshot = simulation.world.events ?? [];
+        } else {
+          snapshot = await api.events(activeId);
+          if (!active) return;
+        }
 
         // The SQLite-backed events endpoint flushes after steps; world.events is current in-memory state.
         const current = eventStreamRef.current;
         if (current.simId !== activeId || !current.hydrated) {
           const hydrated: EventStream = {
             simId: activeId,
-            events: orderWorldEvents(simulation.world.events ?? []),
+            events: orderWorldEvents(snapshot),
             hydrated: true,
           };
           eventStreamRef.current = hydrated;
           setEventStream(hydrated);
         } else {
-          const merged = mergeEventSnapshot(activeId, current.events, simulation.world.events ?? []);
+          const merged = mergeEventSnapshot(activeId, current.events, snapshot);
           const nextStream: EventStream = { simId: activeId, events: merged.events, hydrated: true };
           eventStreamRef.current = nextStream;
           setEventStream(nextStream);
@@ -164,6 +203,16 @@ export function LiveView({
         const remaining = currentQueue.slice(1);
         queueRef.current = remaining;
         setQueue(remaining);
+        // A turn step pauses once the final event of that turn is shown.
+        const steppingTurn = steppingTurnRef.current;
+        if (steppingTurn !== null && remaining[0]?.turn !== steppingTurn) {
+          steppingTurnRef.current = null;
+          setIsPlaying(false);
+          setVisualEvent(null);
+        }
+      } else if (steppingTurnRef.current !== null) {
+        steppingTurnRef.current = null;
+        setIsPlaying(false);
       }
       setVisualEvent(null);
     }, 1200 / playbackSpeed);
@@ -219,17 +268,14 @@ export function LiveView({
     replaceQueue(queueRef.current.slice(1));
   };
 
+  /** Step through the complete next visual turn: every event of that turn is
+   * shown in order, then playback pauses. No event is skipped or dropped. */
   const stepTurn = () => {
     const pending = queueRef.current;
     if (!pending.length || isPlaying) return;
     const nextTurn = pending[0]!.turn;
-    const thisTurn = pending.filter((event) => event.turn === nextTurn);
-    const latestThisTurn = thisTurn[thisTurn.length - 1];
-    if (!latestThisTurn) return;
-    setIsPlaying(false);
-    setVisualEvent(latestThisTurn);
-    setSelectedEvent(latestThisTurn);
-    replaceQueue(pending.filter((event) => event.turn > nextTurn));
+    steppingTurnRef.current = nextTurn;
+    setIsPlaying(true);
   };
 
   const replayHistory = () => {
@@ -276,6 +322,7 @@ export function LiveView({
           <span className="live-status" aria-live="polite">
             <span className={`status-dot ${status || 'unknown'}`} aria-hidden="true" />
             {status || 'No run selected'}{phase ? ` · ${phase}` : ''}
+            {stopPending ? ' · stop pending (finishing current turn)' : ''}
           </span>
         </div>
         <div className="progress live-progress" role="progressbar" aria-valuenow={turn} aria-valuemin={0} aria-valuemax={total} aria-label="Simulation progress">
@@ -342,9 +389,8 @@ export function LiveView({
             <span className="atlas-rail-count">{events.length}</span>
             <span aria-hidden="true">{railOpen ? '−' : '+'}</span>
           </button>
-          {railOpen && (
-            <div id="atlas-event-content" className="atlas-event-content">
-              <section className="atlas-playback" aria-labelledby="playback-heading">
+          <div id="atlas-event-content" className="atlas-event-content" hidden={!railOpen}>
+            <section className="atlas-playback" aria-labelledby="playback-heading">
                 <div className="live-section-heading">
                   <div>
                     <p className="eyebrow">Visual-only queue</p>
@@ -484,13 +530,22 @@ export function LiveView({
                         </ul>
                       </div>
                     )}
+                    {!!(detailEvent.structuralChanges?.length) && (
+                      <div className="atlas-change-list">
+                        <h3>World-level changes</h3>
+                        <ul>
+                          {detailEvent.structuralChanges.map((change, index) => (
+                            <li key={`${change.kind}:${index}`}>{structuralChangeLabel(change)}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <p id="selected-event-heading" className="muted">Select an event to inspect its validated outcome and recorded state changes.</p>
                 )}
               </section>
-            </div>
-          )}
+          </div>
         </aside>
       </div>
     </div>

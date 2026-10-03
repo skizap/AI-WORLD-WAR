@@ -7,6 +7,7 @@ export * from './scoring.js';
 export {
   CODE_VERSION,
   PROMPT_VERSION,
+  INITIAL_GLOBAL_STABILITY,
   addAudit,
   addEvent,
   applyEffects,
@@ -15,9 +16,11 @@ export {
   initWorld,
   emptyRuntime,
   getRel,
+  reconcileAlliances,
   stableJson,
   newId,
   type AppliedChanges,
+  type EffectMeta,
 } from './engine.js';
 export { BASELINE_CATALOG, CATALOG_BY_ID } from '../data/catalog.js';
 export { BASELINE_PACK, AURELIA_WORLD_PACK_V2, ALL_PACKS, getPack } from '../data/nations.js';
@@ -43,7 +46,7 @@ export {
   type NarratorInput,
   type RawEventRef,
 } from './providers.js';
-export { computeRunMetrics, finalMeanScore } from './metrics.js';
+export { computeRunMetrics, finalMeanScore, METRIC_VERSION } from './metrics.js';
 export {
   Simulation,
   type SimulationOptions,

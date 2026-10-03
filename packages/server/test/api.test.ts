@@ -43,8 +43,10 @@ describe('API integration (mock mode)', () => {
     const app = await buildApp(makeDeps());
     const res = await app.inject({ method: 'GET', url: '/api/meta' });
     expect(res.statusCode).toBe(200);
-    const body = res.json() as { actions: unknown[]; severityTable: { default: Record<string, number> }; notice: string };
+    const body = res.json() as { actions: { id: string; sideEffects: string[] }[]; severityTable: { default: Record<string, number> }; notice: string };
     expect(body.actions).toHaveLength(27);
+    // Every action carries its declared side-effect descriptions (consumed contract).
+    expect(body.actions.every((a) => Array.isArray(a.sideEffects))).toBe(true);
     expect(body.severityTable.default['nuclear_escalation']).toBe(60);
     expect(body.notice).toContain('fictional');
     await app.close();
@@ -86,16 +88,146 @@ describe('API integration (mock mode)', () => {
     await app.close();
   }, 60_000);
 
-  it('exposes simple start/stop controls and no intervention endpoints', async () => {
+it('exposes simple start/stop controls and no intervention endpoints', async () => {
     const app = await buildApp(makeDeps());
     const { id } = (await app.inject({ method: 'POST', url: '/api/simulations', payload: cfg({ seed: 'stop-1', totalTurns: 100 }) })).json() as { id: string };
     expect((await app.inject({ method: 'POST', url: `/api/simulations/${id}/pause` })).statusCode).toBe(404);
     expect((await app.inject({ method: 'POST', url: `/api/simulations/${id}/step` })).statusCode).toBe(404);
-    expect((await app.inject({ method: 'POST', url: `/api/simulations/${id}/start` })).statusCode).toBe(200);
-    expect((await app.inject({ method: 'POST', url: `/api/simulations/${id}/stop` })).statusCode).toBe(200);
-    const stopped = (await app.inject({ method: 'GET', url: `/api/simulations/${id}` })).json() as { status: string };
-    expect(stopped.status).toBe('stopped');
+    await app.inject({ method: 'POST', url: `/api/simulations/${id}/start` });
+    // The fast mock run completes autonomously; a repeated Stop must never
+    // rewrite the terminal status or its data.
+    const stopRes = (await app.inject({ method: 'POST', url: `/api/simulations/${id}/stop` })).json() as { status: string; stopRequested: boolean };
+    expect(stopRes.status).toBe('completed');
+    expect(stopRes.stopRequested).toBe(false);
+    await app.inject({ method: 'POST', url: `/api/simulations/${id}/stop` });
+    const terminal = (await app.inject({ method: 'GET', url: `/api/simulations/${id}` })).json() as { status: string };
+    expect(terminal.status).toBe('completed');
     await app.close();
+  }, 60_000);
+
+  it('marks interrupted records and serves archived runs from SQLite after restart', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const tmp = path.join(os.tmpdir(), `aiww-test-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
+    try {
+      // First server lifecycle: create, run to completion, and crash mid-run.
+      {
+        const db = new Db(tmp);
+        const runners = new RunnerManager(db, null);
+        const experiments = new ExperimentManager(db, makeMockRunOne());
+        experiments.baseConfig = DEFAULT_SIMULATION_CONFIG;
+        const app = await buildApp({ db, runners, experiments, client: null, defaultProvider: 'mock' });
+        const { id: doneId } = (await app.inject({ method: 'POST', url: '/api/simulations', payload: cfg({ seed: 'archive-1', totalTurns: 2 }) })).json() as { id: string };
+        await driveToCompletion(app, doneId);
+        // Simulate a crash: a row marked running with partial data.
+        const { id: crashId } = (await app.inject({ method: 'POST', url: '/api/simulations', payload: cfg({ seed: 'archive-2', totalTurns: 9 }) })).json() as { id: string };
+        db.exec(`UPDATE simulations SET status = 'running' WHERE id = ?`, crashId);
+        await app.close();
+        db.close();
+        // Drop all in-memory runners by starting a fresh app on the same DB.
+        const db2 = new Db(tmp);
+        const runners2 = new RunnerManager(db2, null);
+        const experiments2 = new ExperimentManager(db2, makeMockRunOne());
+        experiments2.baseConfig = DEFAULT_SIMULATION_CONFIG;
+        const app2 = await buildApp({ db: db2, runners: runners2, experiments: experiments2, client: null, defaultProvider: 'mock' });
+
+        const list = (await app2.inject({ method: 'GET', url: '/api/simulations' })).json() as { id: string; status: string; archived: boolean }[];
+        const listedDone = list.find((s) => s.id === doneId);
+        const listedCrash = list.find((s) => s.id === crashId);
+        expect(listedDone?.status).toBe('completed');
+        expect(listedCrash?.status).toBe('interrupted');
+
+        const archived = (await app2.inject({ method: 'GET', url: `/api/simulations/${doneId}` })).json() as { archived: boolean; world: WorldState; snapshotTurns: number[] };
+        expect(archived.archived).toBe(true);
+        expect(archived.snapshotTurns.length).toBeGreaterThanOrEqual(2);
+        expect(archived.world.turn).toBe(2);
+
+        const replay = (await app2.inject({ method: 'GET', url: `/api/simulations/${doneId}/replay?turn=1` })).json() as { turn: number; availableTurns: number[]; before: WorldState | null };
+        expect(replay.turn).toBe(1);
+        expect(replay.availableTurns).toContain(2);
+
+        const missing = await app2.inject({ method: 'GET', url: `/api/simulations/${doneId}/replay?turn=99` });
+        expect(missing.statusCode).toBe(404);
+        expect((missing.json() as { code: string }).code).toBe('no_snapshot');
+
+        const unknown = await app2.inject({ method: 'GET', url: '/api/simulations/sim_unknown/replay' });
+        expect((unknown.json() as { code: string }).code).toBe('unknown_simulation');
+
+        const metrics = await app2.inject({ method: 'GET', url: `/api/simulations/${doneId}/metrics` });
+        expect(metrics.statusCode).toBe(200);
+        expect(((metrics.json() as { turns: unknown[] }).turns).length).toBe(2);
+
+        const exported = await app2.inject({ method: 'GET', url: `/api/simulations/${doneId}/export` });
+        expect(exported.statusCode).toBe(200);
+        expect((exported.json() as { snapshots: unknown[] }).snapshots.length).toBeGreaterThanOrEqual(2);
+
+        // Archived runs are read-only: start is refused, stop is idempotent.
+        const startRefused = await app2.inject({ method: 'POST', url: `/api/simulations/${doneId}/start` });
+        expect(startRefused.statusCode).toBe(400);
+        const stopArchived = (await app2.inject({ method: 'POST', url: `/api/simulations/${doneId}/stop` })).json() as { status: string };
+        expect(stopArchived.status).toBe('completed');
+        const stopInterrupted = (await app2.inject({ method: 'POST', url: `/api/simulations/${crashId}/stop` })).json() as { status: string };
+        expect(stopInterrupted.status).toBe('interrupted');
+
+        await app2.close();
+        db2.close();
+      }
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
+  }, 60_000);
+
+  it('finalizes a stop at the turn boundary with a delayed provider and persists the full turn', async () => {
+    const db = new Db(':memory:');
+    const runners = new RunnerManager(db, null);
+    const experiments = new ExperimentManager(db, makeMockRunOne());
+    experiments.baseConfig = DEFAULT_SIMULATION_CONFIG;
+    const app = await buildApp({ db, runners, experiments, client: null, defaultProvider: 'mock' });
+    const config: SimulationConfig = { ...DEFAULT_SIMULATION_CONFIG, scenarioId: 'neutral', fictionPackId: 'baseline_8', seed: 'stop-boundary', totalTurns: 50 };
+    const { SimRunner } = await import('../src/runner.js');
+    const runner = new SimRunner('sim-stop-boundary-test', config, db, null);
+    const { Simulation, DeterministicNarratorProvider, getPack, getScenario } = await import('@aiww/engine');
+    const gateRef: { release: () => void } = { release: () => undefined };
+    const gate = new Promise<void>((resolve) => { gateRef.release = resolve; });
+    let firstCall = true;
+    const slowProvider = {
+      // eslint-disable-next-line require-await
+      decide: async (obs: unknown, ctx: { nationId: string; turn: number }) => {
+        if (firstCall) {
+          firstCall = false;
+          await gate;
+        }
+        return { nation_id: ctx.nationId, turn: ctx.turn, public_rationale: 'slow decision', actions: [{ action_id: 'wait' }] };
+      },
+    };
+    const slowSim = new Simulation({
+      config,
+      pack: getPack('baseline_8'),
+      scenario: getScenario('neutral'),
+      agentProvider: slowProvider as never,
+      narratorProvider: new DeterministicNarratorProvider(),
+      simulationId: 'sim-stop-boundary-test',
+    });
+    runner.sim = slowSim;
+    runner.create();
+    await runner.start();
+    // Stop while the first provider call is still awaited.
+    runner.stop();
+    expect(runner.stopPending).toBe(true);
+    expect(runner.status).toBe('running');
+    gateRef.release();
+    for (let i = 0; i < 2000 && runner.status === 'running'; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(runner.status).toBe('stopped');
+    // The interrupted turn was persisted: a snapshot exists for world.turn.
+    expect(runner.snapshotTurns()).toContain(runner.turn);
+    expect(runner.turn).toBeGreaterThanOrEqual(1);
+    const events = db.all<{ event_json: string }>(`SELECT event_json FROM events WHERE sim_id = ?`, 'sim-stop-boundary-test');
+    expect(events.length).toBeGreaterThan(0);
+    await app.close();
+    db.close();
   }, 60_000);
 
   it('resolves severe actions autonomously without an approval phase', async () => {
@@ -157,6 +289,38 @@ describe('API integration (mock mode)', () => {
     expect(body.records.filter((r) => r.status === 'completed')).toHaveLength(3);
     expect(body.aggregate?.byScenarioModel[0].replicates).toBe(3);
     expect(body.aggregate?.note ?? '').toContain('NOT');
+    await app.close();
+  }, 60_000);
+
+  it('derives distinct deterministic effective seeds per replicate so mock samples are independent', async () => {
+    const app = await buildApp(makeDeps());
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/experiments',
+      payload: {
+        name: 'replicate-grid',
+        seeds: ['rep-seed'],
+        models: ['mock/model'],
+        scenarios: ['neutral'],
+        replicates: 3,
+        provider: 'mock',
+        concurrency: 3,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as {
+      records: { replicate: number; effectiveSeed?: string; configHash?: string; status: string }[];
+      aggregate?: { byScenarioModel: { replicates: number }[] };
+    };
+    const completed = body.records.filter((r) => r.status === 'completed');
+    expect(completed).toHaveLength(3);
+    // Replicate 0 keeps the configured seed; later replicates derive new seeds.
+    expect(completed.find((r) => r.replicate === 0)?.effectiveSeed).toBe('rep-seed');
+    const seeds = new Set(completed.map((r) => r.effectiveSeed));
+    expect(seeds.size).toBe(3);
+    const hashes = new Set(completed.map((r) => r.configHash));
+    expect(hashes.size).toBe(3);
+    expect(body.aggregate?.byScenarioModel[0].replicates).toBe(3);
     await app.close();
   }, 60_000);
 
@@ -259,7 +423,6 @@ describe('API integration (mock mode)', () => {
         OPENROUTER_MAX_RETRIES: 0,
         OPENROUTER_RETRY_BASE_DELAY_MS: 1,
         OPENROUTER_CATALOG_CACHE_TTL_MS: 1000,
-        OPENROUTER_RESPONSE_CACHE_TTL_MS: 1000,
       } as never);
       const config: SimulationConfig = {
         ...DEFAULT_SIMULATION_CONFIG,
@@ -295,11 +458,10 @@ describe('API integration (mock mode)', () => {
         OPENROUTER_API_KEY: 'test-key', OPENROUTER_BASE_URL: 'https://openrouter.test/api/v1',
         OPENROUTER_TIMEOUT_MS: 1000, OPENROUTER_MAX_RETRIES: 0,
         OPENROUTER_RETRY_BASE_DELAY_MS: 1, OPENROUTER_CATALOG_CACHE_TTL_MS: 1000,
-        OPENROUTER_RESPONSE_CACHE_TTL_MS: 1000,
       } as never);
       const result = await client.chat([{ role: 'user', content: 'x' }], {
         role: 'nation_agent', model: 'custom/model', temperature: 0.7, maxTokens: 64,
-        simulationId: 'sim-real-id', turn: 4, cache: false,
+        simulationId: 'sim-real-id', turn: 4,
       });
       expect(result.audit.simulationId).toBe('sim-real-id');
       expect(result.audit.model).toBe('custom/model');

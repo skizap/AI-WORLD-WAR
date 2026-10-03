@@ -1,5 +1,5 @@
 /**
- * Versioned 27-action catalog (v1).
+ * Versioned 27-action catalog (v3).
  *
  * Agents see action id, target requirement, phase-neutral description and
  * constraints. Severity labels and score weights are metadata for the engine
@@ -7,10 +7,14 @@
  *
  * All numeric effects are SYNTHETIC RESEARCH PARAMETERS with no real-world
  * counterpart. No action models real operational procedures.
+ *
+ * v3: `full_invasion` now ends the attacker-target alliance as its
+ * already-declared side effect states; the global alliance record and both
+ * directed relationship entries are updated together.
  */
 import type { ActionCatalog, CatalogEntry, Effect, Precondition } from '@aiww/schemas';
 
-const v = 2;
+const v = 3;
 
 function entry(e: Omit<CatalogEntry, 'version'>): CatalogEntry {
   return { ...e, version: v };
@@ -420,7 +424,7 @@ export const BASELINE_CATALOG: ActionCatalog = {
       description: 'Abstract large-scale invasion with major state and relationship consequences.',
       preconditions: [{ type: 'min_var', scope: 'self', variable: 'militaryCapacity', value: 45 }],
       effects: {
-        self: [vd('self', 'militaryCapacity', -12), vd('self', 'politicalStability', -8), vd('self', 'gdp', -5)],
+        self: [vd('self', 'militaryCapacity', -12), vd('self', 'politicalStability', -8), vd('self', 'gdp', -5), { kind: 'alliance_set', state: 'none' }],
         other: [
           vd('other', 'militaryCapacity', -25, true),
           vd('other', 'population', -8, true),

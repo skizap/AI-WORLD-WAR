@@ -27,6 +27,8 @@ if (!settings.ok) {
 const db = new Db(env.DB_PATH);
 const client = new OpenRouterClient(env);
 const runners = new RunnerManager(db, client);
+// Runs whose process ended while still `running` are read-only interrupted
+// records (marked during RunnerManager startup).
 const effectiveDefaultConfig = {
   ...DEFAULT_SIMULATION_CONFIG,
   provider: env.DEFAULT_PROVIDER,
@@ -49,11 +51,16 @@ const app = await buildApp({
   client,
   defaultProvider: env.DEFAULT_PROVIDER,
   defaultConfig: effectiveDefaultConfig,
+  logLevel: env.LOG_LEVEL,
 });
 
 try {
   await app.listen({ port: env.PORT, host: env.HOST });
   console.log(`[aiww] RESEARCH SIMULATION API on http://${env.HOST}:${env.PORT} (fictional only; provider=${env.DEFAULT_PROVIDER})`);
+  const interrupted = db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM simulations WHERE status = 'interrupted'`);
+  if (interrupted && interrupted.count > 0) {
+    console.log(`[aiww] ${interrupted.count} interrupted run(s) from a previous process are available as read-only records`);
+  }
 } catch (err) {
   if (err instanceof OpenRouterError) console.error('[aiww]', err.message);
   process.exit(1);

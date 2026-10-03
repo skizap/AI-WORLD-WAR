@@ -1,30 +1,34 @@
 import { useEffect, useRef, useState } from 'react';
 import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from 'recharts';
 import { api, VARIABLE_LABELS } from '../api';
+import { ACTIVE_NATION_NAMES, type ActiveNationId } from '../atlas/types';
 
 type NationData = Awaited<ReturnType<typeof api.nation>>;
+
 type SimulationViewState = {
   simId: string;
   nations: string[];
   loading: boolean;
   error: string | null;
-};
-type NationDetailState = {
-  simId: string;
-  nationId: string;
-  data: NationData | null;
-  loading: boolean;
-  error: string | null;
+  archived: boolean;
 };
 
-export function NationView({ simId, initialNationId = null }: { simId: string | null; initialNationId?: string | null }) {
+export function NationView({
+  simId,
+  selectedNationId,
+  onSelectNation,
+}: {
+  simId: string | null;
+  selectedNationId: string | null;
+  onSelectNation: (nationId: string | null | ((current: string | null) => string | null)) => void;
+}) {
   const [simulationState, setSimulationState] = useState<SimulationViewState | null>(null);
-  const [selected, setSelected] = useState<string | null>(initialNationId);
-  const [detailState, setDetailState] = useState<NationDetailState | null>(null);
+  const [detailState, setDetailState] = useState<{ simId: string; nationId: string | null; data: NationData | null; loading: boolean; error: string | null } | null>(null);
   const simulationStatus = useRef<string | null>(null);
   const nationRequestId = useRef(0);
   const nationPollInterval = useRef<number | null>(null);
 
+  const selected = selectedNationId;
   const currentSimulation = simulationState?.simId === simId ? simulationState : null;
   const nations = currentSimulation?.nations ?? [];
   const simulationReady = currentSimulation !== null && !currentSimulation.loading;
@@ -35,9 +39,8 @@ export function NationView({ simId, initialNationId = null }: { simId: string | 
   const detailLoading = selectedAvailable && (!currentDetail || currentDetail.loading);
 
   useEffect(() => {
-    setSelected(initialNationId);
     setDetailState(null);
-    setSimulationState(simId ? { simId, nations: [], loading: true, error: null } : null);
+    setSimulationState(simId ? { simId, nations: [], loading: true, error: null, archived: false } : null);
     simulationStatus.current = null;
     nationRequestId.current += 1;
 
@@ -62,9 +65,9 @@ export function NationView({ simId, initialNationId = null }: { simId: string | 
         simulationStatus.current = snapshot.status;
         if (!initialized) {
           initialized = true;
-          const ids = Object.keys(snapshot.world.nations);
-          setSimulationState({ simId, nations: ids, loading: false, error: null });
-          setSelected((current) => current && ids.includes(current) ? current : ids[0] ?? null);
+          const ids = snapshot.world ? Object.keys(snapshot.world.nations) : [];
+          setSimulationState({ simId, nations: ids, loading: false, error: null, archived: snapshot.archived });
+          onSelectNation((current) => (current && ids.includes(current) ? current : ids[0] ?? null));
         } else {
           setSimulationState((current) => current?.simId === simId && (current.loading || current.error !== null)
             ? { ...current, loading: false, error: null }
@@ -86,7 +89,7 @@ export function NationView({ simId, initialNationId = null }: { simId: string | 
         const message = e instanceof Error ? e.message : String(e);
         setSimulationState((current) => current?.simId === simId
           ? { ...current, loading: false, error: message }
-          : { simId, nations: [], loading: false, error: message });
+          : { simId, nations: [], loading: false, error: message, archived: false });
       } finally {
         if (controller === requestController) controller = null;
         inFlight = false;
@@ -106,7 +109,8 @@ export function NationView({ simId, initialNationId = null }: { simId: string | 
       controller?.abort();
       simulationStatus.current = null;
     };
-  }, [simId, initialNationId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simId]);
 
   useEffect(() => {
     if (!simId || !selected || !simulationReady || !selectedAvailable) return;
@@ -172,17 +176,21 @@ export function NationView({ simId, initialNationId = null }: { simId: string | 
         <div className="fieldrow">
           <label>
             Nation
-            <select value={selected ?? ''} onChange={(e) => {
-              const nationId = e.target.value || null;
-              nationRequestId.current += 1;
-              setSelected(nationId);
-              setDetailState(nationId
-                ? { simId, nationId, data: null, loading: true, error: null }
-                : null);
-              setSimulationState((current) => current?.simId === simId ? { ...current, error: null } : current);
-            }} aria-label="Select nation">
+            <select
+              value={selected ?? ''}
+              onChange={(e) => {
+                nationRequestId.current += 1;
+                const nationId = e.target.value || null;
+                onSelectNation(nationId);
+                setDetailState(nationId
+                  ? { simId, nationId, data: null, loading: true, error: null }
+                  : null);
+                setSimulationState((current) => current?.simId === simId ? { ...current, error: null } : current);
+              }}
+              aria-label="Select nation"
+            >
               {nations.map((n) => (
-                <option key={n} value={n}>{n}</option>
+                <option key={n} value={n}>{ACTIVE_NATION_NAMES[n as ActiveNationId] ?? n}</option>
               ))}
             </select>
           </label>
@@ -238,6 +246,20 @@ export function NationView({ simId, initialNationId = null }: { simId: string | 
           </ResponsiveContainer>
         </div>
       </section>
+
+      {data && !!data.provocations.length && (
+        <section className="panel" style={{ gridColumn: '1 / -1' }}>
+          <h2>Recorded provocations (audit trail)</h2>
+          <p className="muted">Provocations are recorded synthetic history; they do not trigger automated retaliation in the current engine.</p>
+          <ul className="muted">
+            {data.provocations.map((p, i) => (
+              <li key={i}>
+                t{p.turn} · {ACTIVE_NATION_NAMES[p.byNationId as ActiveNationId] ?? p.byNationId} · {p.actionId}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="panel" style={{ gridColumn: '1 / -1' }}>
         <h2>Action history (accepted &amp; rejected)</h2>

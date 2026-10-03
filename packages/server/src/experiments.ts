@@ -99,13 +99,16 @@ export class ExperimentManager {
           const overrideLimits = (overrides['limits'] ?? {}) as Record<string, unknown>;
           const overrideScoring = (overrides['scoring'] ?? {}) as Record<string, unknown>;
           const overrideStopConditions = (overrides['stopConditions'] ?? {}) as Record<string, unknown>;
+          // Each replicate gets its own deterministic effective seed so mock
+          // replicates are independent pseudoreplicates, not identical reruns.
+          const effectiveSeed = effectiveReplicateSeed(job.seed, job.replicate);
           const nationAgents = Object.fromEntries(
             getPack(base.fictionPackId).nations.map((nation) => [nation.id, job.model]),
           );
           const config = SimulationConfig.parse({
             ...base,
             ...overrides,
-            seed: job.seed,
+            seed: effectiveSeed,
             scenarioId: job.scenarioId,
             provider: spec.provider,
             models: {
@@ -121,12 +124,13 @@ export class ExperimentManager {
             scoring: { ...base.scoring, ...overrideScoring },
             stopConditions: { ...base.stopConditions, ...overrideStopConditions },
           });
-          const simulationId = `exp_${computeConfigHash(config).slice(0, 8)}_${job.seed}_${job.replicate}`;
+          const simulationId = `exp_${computeConfigHash(config).slice(0, 8)}_${job.seed}_r${job.replicate}`;
           const metrics = await this.runOne(config, simulationId);
           records.push({
             simulationId,
             experimentId: id,
             seed: job.seed,
+            effectiveSeed,
             model: job.model,
             scenarioId: job.scenarioId,
             replicate: job.replicate,
@@ -248,6 +252,17 @@ export function makeRunOne(client: OpenRouterClient | null): (config: Simulation
     await sim.run();
     return sim.computeMetrics();
   };
+}
+
+/**
+ * Deterministic per-replicate effective seed. Statistical replicates must be
+ * independent samples: the mock provider derives every decision from the seed,
+ * so replicates that reuse one configured seed would be identical
+ * pseudoreplicates. A single ordinary run (replicate 0 without an explicit
+ * replicate index) keeps its configured seed for reproducibility.
+ */
+export function effectiveReplicateSeed(seed: string, replicate: number): string {
+  return replicate === 0 ? seed : `${seed}#r${replicate}`;
 }
 
 /** Backward-compatible test helper for deterministic mock experiments. */

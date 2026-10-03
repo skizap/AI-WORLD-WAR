@@ -5,6 +5,7 @@ import { zoom, zoomIdentity, type D3ZoomEvent, type ZoomBehavior, type ZoomTrans
 import type { WorldEvent } from '@aiww/schemas';
 import { api, SEVERITY_TEXT } from '../api';
 import { assertAtlasTopology, atlasFeatures } from './atlasData';
+import { ATLAS_EVENT_KIND_LABEL, ACTION_VISUAL_KIND_IDS, classifyAction } from './actions';
 import {
   ACTIVE_NATION_IDS,
   ACTIVE_NATION_NAMES,
@@ -26,18 +27,11 @@ type AtlasMapProps = {
 type EventSymbol = {
   actorId: ActiveNationId;
   targetId?: ActiveNationId;
-  kind: 'diplomacy' | 'trade' | 'cyber' | 'military';
+  kind: ReturnType<typeof classifyAction>;
   path?: string;
   pulseAt: [number, number];
   severe: boolean;
 };
-
-function classifyAction(actionId: string): EventSymbol['kind'] {
-  if (/cyber/i.test(actionId)) return 'cyber';
-  if (/(trade|commerce|sanction|blockade)/i.test(actionId)) return 'trade';
-  if (/(military|attack|invasion|strike|weapon|exercise|surveillance|nuclear)/i.test(actionId)) return 'military';
-  return 'diplomacy';
-}
 
 function linkPath(from: [number, number], to: [number, number]): string {
   const dx = to[0] - from[0];
@@ -294,6 +288,7 @@ export function AtlasMap({ event, animateEvent = false, onViewNation }: AtlasMap
               onChange={(e) => { setSearch(e.target.value); setSearchNotice(''); }}
               placeholder="Search fictional aliases"
               autoComplete="off"
+              aria-describedby="atlas-search-help"
             />
             <datalist id="atlas-region-aliases">
               {regions.map(({ feature }) => <option key={feature.properties.regionId} value={feature.properties.alias} />)}
@@ -302,7 +297,7 @@ export function AtlasMap({ event, animateEvent = false, onViewNation }: AtlasMap
           </div>
           <span id="atlas-search-help" className="sr-only">Search aliases, then use arrow keys on a region to browse the map.</span>
         </form>
-        <div className="atlas-zoom-tools" aria-label="Map zoom controls">
+        <div className="atlas-zoom-tools" role="group" aria-label="Map zoom controls">
           <button type="button" onClick={() => zoomBy(1.5)} aria-label="Zoom in">+</button>
           <button type="button" onClick={() => zoomBy(1 / 1.5)} aria-label="Zoom out">−</button>
           <button type="button" onClick={resetZoom}>Reset view</button>
@@ -393,7 +388,7 @@ export function AtlasMap({ event, animateEvent = false, onViewNation }: AtlasMap
                     markerEnd="url(#atlas-symbol-arrow)"
                     aria-hidden="true"
                   >
-                    <title>Illustrative event link only; no route, unit movement, or border change is simulated.</title>
+                    <title>{ATLAS_EVENT_KIND_LABEL[eventSymbol.kind]} · illustrative event link only; no route, unit movement, or border change is simulated.</title>
                   </path>
                 )}
                 {eventSymbol && !eventSymbol.path && (

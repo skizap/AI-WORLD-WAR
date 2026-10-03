@@ -27,7 +27,6 @@ listed under "Hard-coded behavior" below.
 | `maxTokens` | 1024 | 64–32000 | Nation-agent and repair output cap; narrator output is capped at 600 |
 | `observation.includeHistory` | true | boolean | Prior public events visible to agents |
 | `observation.includeGoals` | true | boolean | Goals visible (ablatable) |
-| `observation.includeMessages` | true | boolean | **Declared only — not read anywhere yet**; messages are never included in observations |
 | `observation.stateMode` | 'full' | `full` values or `deltas` only | State presentation |
 | `observation.severityVisibility` | 'hidden' | `hidden` · `exposed` | Baseline hides severity labels from agents; `exposed` = experimental condition |
 | `observation.framing` | 'neutral' | `neutral` · `low_stakes` | Prompt framing (experimental) |
@@ -45,7 +44,10 @@ listed under "Hard-coded behavior" below.
 | `stopConditions.populationCollapseThreshold` | 10 | 0–100 | Run ends when any nation's population < threshold |
 | `stopConditions.maxViolentActionsPerTurn` | 6 | 1–100 | Run ends when accepted violent+nuclear actions in one turn > threshold |
 | `stopConditions.globalStabilityFloor` | 5 | 0–100 | Run ends when global stability < floor |
-| `safetyMode` | 'fictional_only' | `fictional_only` · `educational_fictionalization` | **Declared only — no code path enforces it yet**; both values currently behave identically (see docs/SAFETY.md) |
+| `safetyMode` | 'fictional_only' | `fictional_only` · `educational_fictionalization` | **Deprecated, declared-only field** — both values behave identically; retained for backward compatibility with saved configurations. The persistent fiction notice is enforced in code and shown in the UI (see docs/SAFETY.md) |
+
+Configs saved by engine versions before 0.3.0 may still contain the removed
+`observation.includeMessages` key; it is ignored when parsed.
 
 ## Hard-coded behavior
 
@@ -57,11 +59,14 @@ listed under "Hard-coded behavior" below.
   before validation, and narrator event messages are capped at 600 characters
   (packages/engine/src/validation.ts, packages/engine/src/simulation.ts).
 
-## Synthetic transition parameters (v2 catalog)
+## Synthetic transition parameters (v3 catalog)
 
 The registry holds **27 actions**: 6 de-escalation, 2 status quo, 7 posturing,
 8 non-violent escalation, 2 violent escalation, 2 nuclear escalation.
-Highlights — the full registry is `packages/engine/data/catalog.ts` (all values
+Catalog v3 additionally implements the already-declared `full_invasion` side
+effect of ending the attacker–target alliance (both relationship entries and
+the global alliance record are updated together). Highlights — the full
+registry is `packages/engine/data/catalog.ts` (all values
 are fictional research parameters):
 
 - `increase_military_capacity`: military +8, gdp −2, third-party tension +2.
@@ -100,7 +105,7 @@ used when a simulation config does not override them.
 | `PORT` | 8787 | API port |
 | `HOST` | 127.0.0.1 | API bind address |
 | `DB_PATH` | ./data/aiww.sqlite | SQLite file, resolved against the server process working directory (npm workspace scripts run in `packages/server`, so the live DB is `packages/server/data/aiww.sqlite`) |
-| `LOG_LEVEL` | info | Parsed but **currently unused** — Fastify logging is disabled |
+| `LOG_LEVEL` | silent | Fastify log level: `silent`, `error`, `warn`, `info`, or `debug` |
 | `DEFAULT_PROVIDER` | mock | Overrides the default `provider` for new simulations |
 | `OPENROUTER_API_KEY` | (empty) | Required for `provider: openrouter` runs; never logged or returned |
 | `OPENROUTER_BASE_URL` | https://openrouter.ai/api/v1 | Must be http(s); invalid values only warn at startup |
@@ -111,10 +116,23 @@ used when a simulation config does not override them.
 | `OPENROUTER_MAX_RETRIES` | 3 | Retries for 429/5xx/transport errors (4 attempts max); backoff 500/1000/2000 ms |
 | `OPENROUTER_RETRY_BASE_DELAY_MS` | 500 | Exponential backoff base |
 | `OPENROUTER_CATALOG_CACHE_TTL_MS` | 300000 | `/models` catalog cache TTL |
-| `OPENROUTER_RESPONSE_CACHE_TTL_MS` | 600000 | Response cache TTL — implemented but currently unused: all provider calls pass `cache: false` |
+
+Response caching is intentionally absent: stochastic agent and narrator calls
+are never deduplicated.
 
 `.env.example` ships illustrative model slugs (`openai/gpt-5.6-luna`,
 `z-ai/glm-5.3-flash`, `openai/gpt-5.6-sol`) that differ from the code defaults;
 whatever you set there becomes the startup default. Per-simulation and
 per-nation model selections override environment defaults, and the effective
 model is recorded with every decision.
+
+## Server exposure and local data
+
+- There is no authentication. Keep `HOST` on `127.0.0.1` (the default). If you
+  bind a non-loopback host, the hobby research API and its local SQLite data
+  become reachable from other machines — there is no account system as a
+  substitute.
+- SQLite backups: copy the database file (`DB_PATH`,
+  `packages/server/data/aiww.sqlite` under workspace scripts) while the server
+  is stopped, or use the per-run JSON export endpoint. No built-in action
+  deletes or clears the database; deleting history is a manual file operation.

@@ -93,27 +93,28 @@ packages/ui/
 ├── vite.config.ts              # react plugin, port 5173, /api proxy, outDir dist
 ├── src/
 │   ├── main.tsx                # createRoot, StrictMode, and ErrorBoundary
-│   ├── App.tsx                 # shell: accessible tabs, meta, simId, selected nation, notices
+│   ├── App.tsx                 # shell: accessible tabs, meta notice, simId, owned selected nation + setup draft
 │   ├── ErrorBoundary.tsx       # render fallback for unexpected view errors
 │   ├── api.ts                  # the ONLY network layer + shared UI constants/types
 │   ├── styles.css              # global theme (CSS variables) + component classes
 │   ├── atlas/
 │   │   ├── AtlasMap.tsx        # projection, accessible regions, search, zoom, event symbols
 │   │   ├── atlasData.ts        # runtime allowlist validation + TopoJSON decoding
+│   │   ├── actions.ts          # metadata-driven visual event categories (unknown fallback)
 │   │   ├── events.ts           # event order, dedupe, and visual eligibility
 │   │   └── types.ts            # opaque region and fictional nation types
 │   └── views/
-│       ├── SetupView.tsx       # scenario/pack/seed/turns/models/ablations form + create
+│       ├── SetupView.tsx       # labeled config form (draft preserved across tabs) + effective summary + create
 │       ├── LiveView.tsx        # run controls, atlas, ordered history, visual playback, nation cards
 │       ├── NationView.tsx      # fresh per-nation profile, variable history chart, action history
 │       ├── AnalyticsView.tsx   # 4 metric charts, spike table, run totals, CSV/JSON exports
-│       └── ReplayView.tsx      # stale-safe turn scrubber, comparison, trace, confirmed re-run
+│       └── ReplayView.tsx      # snapshot-derived scrubber, comparison, trace, confirmed re-run
 ├── public/atlas/
 │   └── aurelia-atlas.topo.json # generated, fictionalized runtime geometry only
 ├── scripts/
 │   └── build-atlas.mjs         # offline Natural Earth parser and TopoJSON builder
 └── test/
-    ├── atlas*.test.*           # sanitized data, region search, map symbols
+    ├── atlas*.test.*           # sanitized data, region search, map symbols, action categories
     ├── events.test.ts          # stable ordering, overlap dedupe, visual eligibility
     ├── live-atlas.test.tsx     # hydration, new-event queue, simulation switching
     ├── app-shell.test.tsx      # tab keyboard behavior and error fallback
@@ -136,19 +137,19 @@ the raw `.shp`/`.dbf` inputs are used by the offline build script only.
 ```text
 index.html
    └─ main.tsx ──> App.tsx
-                     │ owns: tab, meta, simId, selectedNationId, app error
+                      │ owns: tab, meta, simId, selectedNationId, setupDraft, app error
+                      │
+                     ├─ SetupView     props: { meta, draft, onDraftChange, onCreated(id) } ─ create sim ─┐
+                     │                                                                                 │
+                     │   onCreated => App.setSimId(id) + App.setTab('Live') <──────────────────────────┘
                      │
-                    ├─ SetupView     props: { meta, onCreated(id) }      ─ create sim ─┐
-                    │                                                                    │
-                    │   onCreated => App.setSimId(id) + App.setTab('Live') <────────────┘
-                    │
-                     ├─ LiveView      props: { simId, onPick, onViewNation } (polls 1.5 s)
-                     ├─ NationView    props: { simId, initialNationId }   (polls selected nation)
-                     ├─ AnalyticsView props: { simId }                    (polls 2 s)
-                     └─ ReplayView    props: { simId, onOpenSimulation }  (fetch per turn)
-                                           │
-                                           ▼
-                               src/api.ts  →  /api/* + local atlas asset
+                      ├─ LiveView      props: { simId, onPick, onViewNation } (polls 1.5 s)
+                      ├─ NationView    props: { simId, selectedNationId, onSelectNation } (polls selected nation)
+                      ├─ AnalyticsView props: { simId }                    (polls 2 s)
+                      └─ ReplayView    props: { simId, onOpenSimulation }  (fetch per turn)
+                                            │
+                                            ▼
+                                src/api.ts  →  /api/* + local atlas asset
 ```
 
 Key behaviors:
@@ -186,13 +187,13 @@ Key behaviors:
 | `health()` | `GET /openrouter/health` | `{ configured, ok, detail }` | **unused** |
 | `models()` | `GET /openrouter/models` | `{ count, models[{ id, name?, contextLength?, pricing? }] }` | `SetupView` (browse catalog) |
 | `createSimulation(config)` | `POST /simulations` | `{ id, status }` | `SetupView`, `ReplayView` (re-run) |
-| `listSimulations(signal?)` | `GET /simulations` | `{ id, status, turn, totalTurns, scenarioId, provider, model }[]` | `LiveView` |
-| `getSimulation(id, signal?)` | `GET /simulations/:id` | `{ id, status, phase, stopReason, turn, totalTurns, world, config }` — note the server also returns `decisions`, not typed here | `LiveView`, `NationView`, `ReplayView` |
-| `control(id, 'start'\|'stop')` | `POST /simulations/:id/start\|stop` | `{ id, status }` | `LiveView` |
+| `listSimulations(signal?)` | `GET /simulations` | `{ id, status, turn, totalTurns, scenarioId, provider, model, archived }[]` — live runs and SQLite-archived records merged | `LiveView` |
+| `getSimulation(id, signal?)` | `GET /simulations/:id` | `{ id, status, phase|null, stopReason, stopRequested, stopPending, turn, totalTurns, world|null, config, snapshotTurns[], archived }` — the server also returns `decisions`, not typed here | `LiveView`, `NationView`, `ReplayView` |
+| `control(id, 'start'\|'stop')` | `POST /simulations/:id/start\|stop` | `{ id, status, stopRequested?, stopPending? }` — stop is idempotent and never rewrites terminal statuses | `LiveView` |
 | `metrics(id)` | `GET /simulations/:id/metrics` | `RunMetrics` | `AnalyticsView` |
-| `events(id, fromTurn?)` | `GET /simulations/:id/events?fromTurn=` | persisted `WorldEvent[]` | **unused by Live**; SQLite flushes can lag the current in-memory world |
-| `nation(id, nid)` | `GET /simulations/:id/nations/:nid` | `{ profile, history[{turn,variables}], current, actions[] }` | `NationView` |
-| `replay(id, turn)` | `GET /simulations/:id/replay?turn=` | `{ turn, before, after, events, narrator?, reRunConfig }` | `ReplayView` |
+| `events(id, fromTurn?)` | `GET /simulations/:id/events?fromTurn=` | persisted `WorldEvent[]` | `LiveView` hydration for archived runs (world may be `null` there) |
+| `nation(id, nid)` | `GET /simulations/:id/nations/:nid` | `{ profile, history[{turn,variables}], current, actions[], provocations[], archived }` | `NationView` |
+| `replay(id, turn)` | `GET /simulations/:id/replay?turn=` | `{ turn, before|null, after, events, narrator?, reRunConfig, availableTurns[], archived }`; a missing snapshot is a 404 with `code: 'no_snapshot'` (unknown simulation → `'unknown_simulation'`) | `ReplayView` |
 | `exportCsv(id)` | raw `fetch …/export?format=csv` | `Response` | **unused** (views use `<a download>` links) |
 | `exportJson(id)` | raw `fetch …/export` | `Response` | **unused** |
 | `runExperiment(spec)` | `POST /experiments` | `unknown` | **unused** — there is no experiments screen yet |
@@ -216,82 +217,107 @@ update `api.ts` first — views will then type-error where they need updating.
 
 ### 6.1 `App.tsx` (shell)
 
-- State: `tab`, `meta`, `simId`, `error`; on mount calls `api.meta()`.
-- Renders: top bar with code/prompt/catalog versions, the persistent notice
-  that explains Earth-derived boundary geometry, inline meta errors, a footer
-  disclaimer, and a `role="tablist"` with arrow/Home/End keyboard navigation.
+- State: `tab`, `meta`, `simId`, `selectedNationId` (single owner shared by the
+  atlas and NationView), `setupDraft` (Setup form state preserved across tab
+  switches), `error`; on mount calls `api.meta()`.
+- Renders: top bar with code/prompt/catalog versions, the canonical persistent
+  fiction notice served by the API (`meta.notice`), inline meta errors, a
+  footer disclaimer, and a `role="tablist"` with arrow/Home/End keyboard
+  navigation. The Earth-derived-boundary caveat lives on the atlas panel
+  (`atlas-map-caption`, `role="note"`), not duplicated here.
 - `TABS = ['Setup', 'Live', 'Nations', 'Analytics', 'Replay']`; add new tabs
   here with a matching tabpanel.
-- SetupView only mounts when `meta` loaded (`{meta && tab === 'Setup' && …}`);
-  the other views always mount and handle `simId === null` themselves.
+- Only the selected view mounts; inactive tabpanels are hidden empty sections
+  that exist for `aria-controls` targets. SetupView additionally requires
+  `meta` (`{meta && tab === 'Setup' && …}`).
 
 ### 6.2 `SetupView.tsx` (run configuration)
 
-- Props: `{ meta: Meta; onCreated: (id: string) => void }`.
-- Local state mirrors the exposed config fields: scenario,
-  pack, seed, turns, provider, default nation model, per-nation models, narrator
-  model, repair model, temperature, maxTokens, scoring scheme,
-  severityVisibility, includeHistory, stateMode, framing, narratorEnabled,
-  includeNarratorSummaries, plus `busy`, `error`, catalog `models`.
+- Props: `{ meta: Meta; draft: SetupDraft | null; onDraftChange: (draft: SetupDraft) => void; onCreated: (id: string) => void }`.
+- The form state is a single `SetupDraft` object owned by `App` (preserved
+  across tab switches); `defaultSetupDraft(meta)` seeds it from the env-merged
+  server defaults, and "Reset to server defaults" restores it.
+- Exposed, labeled controls: scenario and pack (with descriptions and the
+  scenario-over-pack precedence note), seed, turns, provider (with the env
+  default noted), default + per-nation + narrator + repair models
+  (with env-override notes), temperature, maxTokens, scoring scheme with
+  editable custom weights (pre-seeded from the default ladder),
+  severityVisibility, history, stateMode, framing, narrator toggles, action
+  limits, and all three stop conditions with their threshold semantics
+  spelled out (below-value/above-count/strictly-less-than semantics).
 - `config` is a `useMemo<SimulationConfig>` that spreads `meta.defaultConfig`
-  and overrides the form fields. Limits and stop conditions are editable and
-  range-validated. Hidden defaults (`turnOrderMode`, `safetyMode`,
-  `passiveRulesEnabled`, `includeMessages`, and custom scoring weights) flow
-  through from the server defaults — **the form does not expose them**.
-- Numeric ranges and all nation/narrator/repair model IDs are validated inline;
-  Create remains disabled until corrections are made. Action limits and stop
-  conditions have editable controls.
+  and overrides the form fields; `customWeights` is sent only when the scheme
+  is `custom`. Hidden defaults (`turnOrderMode`, `safetyMode` — deprecated,
+  `passiveRulesEnabled`) flow through from the server defaults.
+- Numeric ranges, all model IDs, and custom weights are validated inline;
+  Create remains disabled until corrections are made.
+- An effective-run summary shows the resolved scenario/pack/seed/turns/
+  provider, deduped model assignments, and an estimated request count
+  (turns × nation-agent calls, plus narrator calls when enabled; repair adds
+  at most one retry per agent call).
 - Actions:
   - `applyModelToAll(model?)` — sets the default and every nation model of the
     selected pack (also used by catalog rows).
 - `loadModels()` — `api.models()`, truncated to the first 100 for display;
   catalog search filters ID, name, context length, and pricing.
   - `create()` — `api.createSimulation(config)`, then `onCreated(id)` (App
-    switches to Live).
+    switches to Live). The draft is kept after a successful create and marked
+    with a status line.
 - Provider select disables `openrouter` unless `meta.openRouterKeyConfigured`.
 - Two panels (`.grid cols-2`) + a full-width create panel; controls use
-  `.fieldrow`/`.checkbox-row`. No controls exist for message limits,
-  stop conditions, turn order, passive rules, `includeMessages`, `safetyMode`,
-  or custom scoring weights.
+  `.fieldrow`/`.checkbox-row`. Turn order, passive rules, and the deprecated
+  `safetyMode` are not exposed (they flow through from server defaults).
 
 ### 6.3 `LiveView.tsx` (map-led run monitor)
 
-- Props: `{ simId: string | null; onPick: (id: string) => void }`.
+- Props: `{ simId: string | null; onPick: (id: string) => void; onViewNation? }`.
 - `refresh` lists runs and calls `api.getSimulation` immediately and every
   **1500 ms**. An in-flight guard prevents overlap; an `AbortController` and
   active flag prevent stale responses after simulation changes.
-- Uses the current in-memory `world.events` snapshot instead of the SQLite-backed
-  `/events` endpoint: initial events and events created during a provider wait
-  can precede persistence flushes. Events are sorted by `(turn, seq)` and
-  deduplicated by simulation ID + event ID.
-- Renders the primary atlas alongside a collapsible event rail. Regions are
-  keyboard-accessible via roving focus and arrow/Home/End keys, searchable by
-  fictional alias, zoomable/pannable, and selectable. Active features map
-  one-to-one to the eight fiction-pack IDs; other polygons are neutral scenery.
+- The run list merges live runners and SQLite-archived records (`archived`
+  flag). For archived runs (`world === null`) the event stream hydrates from
+  the persisted `/events` endpoint; nation cards show an empty state.
+- Uses the current in-memory `world.events` snapshot for live runs instead of
+  the SQLite-backed `/events` endpoint: initial events and events created
+  during a provider wait can precede persistence flushes. Events are sorted by
+  `(turn, seq)` and deduplicated by simulation ID + event ID.
+- Renders the primary atlas alongside a collapsible event rail (the rail
+  content container stays in the DOM with `hidden` so `aria-controls` always
+  resolves). Regions are keyboard-accessible via roving focus and
+  arrow/Home/End keys, searchable by fictional alias, zoomable/pannable, and
+  selectable. Active features map one-to-one to the eight fiction-pack IDs;
+  other polygons are neutral scenery.
 - Newly observed `type: action`, `status: accepted` events enter a visual queue.
   Prior history is hydrated without playback until Replay history is requested.
   Rejected, passive, narrator, scenario, and system events stay in history but
   never create map movement. The queue supports event/turn stepping, speed,
   pause, replay history, and jump-to-live; these controls never pause or mutate
-  the simulation.
+  the simulation and make no network calls. **Step turn** shows every event of
+  the next visual turn in order, then pauses — no event is skipped.
+- Event details render nation variables, relationship changes, and typed
+  world-level `structuralChanges` (global stability, alliance transitions,
+  dispute identity, intelligence sharing, ongoing effects, provocations).
 - Map links and pulses are symbolic SVG marks only. The map does not show routes,
   units, logistics, real distances, influence, ownership changes, or border
   changes; this notice remains inside fullscreen presentation.
 - Start/Stop, phase/status, progress, seed/scenario context, and the six
-  synthetic nation variables remain available below/above the map.
+  synthetic nation variables remain available below/above the map. When a stop
+  is pending the status shows "stop pending (finishing current turn)" — Stop
+  is a turn-boundary contract, not an immediate kill.
 
 ### 6.4 `NationView.tsx` (per-nation detail)
 
-- Props: `{ simId: string | null; initialNationId?: string | null }`; selected
-  nation can be initialized by the atlas.
+- Props: `{ simId: string | null; selectedNationId: string | null; onSelectNation }`; selection is owned by `App` so the atlas and this view share one piece of state.
 - Simulation and selected-nation responses are scoped to their IDs; stale
   requests are ignored, old data/errors are cleared on switches, and the
   selected detail refreshes every 2500 ms while status is `running`.
 - Renders: nation `<select>`, profile panel (description, background,
   governance/orientation badges, aggression/force scores, goals), a Recharts
   line chart of five variables (`militaryCapacity, gdp, trade,
-  politicalStability, softPower`; palette hard-coded hex), and an action-history
-  feed (newest first) showing rejections with reasons and optional `details`.
+  politicalStability, softPower`; palette hard-coded hex), the recorded
+  provocation audit trail (display-only; no automated retaliation), and an
+  action-history feed (newest first) showing rejections with reasons and
+  optional `details`.
 
 ### 6.5 `AnalyticsView.tsx` (charts and exports)
 
@@ -316,12 +342,19 @@ update `api.ts` first — views will then type-error where they need updating.
 - Props: `{ simId: string | null; onOpenSimulation?: (id) => void }`.
 - Simulation and per-turn replay fetches are keyed by ID/turn, abort or ignore
   stale results, clear stale state, and show loading/empty/error/retry states.
-- The scrubber uses the available world turn/snapshots. Re-run opens inline
-  confirmation, creates a separate simulation from the saved seed/config, and
-  displays the result with an optional Open in Live action; it does not block
-  with `alert()`/`confirm()`.
-- Before/after, action trace, narrator summary (narrator event filtered to avoid
-  duplicate display), and the first five variable columns remain.
+- The scrubber range comes from `getSimulation(...).snapshotTurns` (completed
+  turns only). A request for a turn without a stored snapshot is a distinct
+  "pending" state (`code: 'no_snapshot'`), separate from unknown simulations
+  (`'unknown_simulation'`) or storage failures; idle runs say no snapshots
+  exist yet.
+- "Before" values without a prior snapshot display as unknown (`— → x`) rather
+  than zero, with an explicit note on the first turn.
+- Re-run opens inline confirmation, creates a separate simulation from the
+  saved seed/config, and displays the result with an optional Open in Live
+  action; it does not block with `alert()`/`confirm()`.
+- Before/after, action trace (action descriptions resolved from `meta.actions`
+  labels), narrator summary (narrator event filtered to avoid duplicate
+  display), and the first five variable columns remain.
 
 ### Atlas data and event semantics
 
@@ -414,8 +447,8 @@ Recharts' default keyboard limitations.
   authoritative and rejects invalid requests.
 - `provider: 'openrouter'` creation fails with 400 when no API key is
   configured; the UI already disables that option in that case.
-- The server's `/api/meta.notice` text is currently **not displayed** — App.tsx
-  renders a hard-coded fiction + Earth-derived-geometry notice.
+- App.tsx renders the canonical persistent fiction notice from
+  `meta.notice`; the Earth-derived-boundary caveat stays on the atlas panel.
 
 ## 9. Testing (`packages/ui/test/ui.test.tsx`)
 
@@ -425,7 +458,8 @@ Recharts' default keyboard limitations.
 - `beforeEach` stubs `global.fetch` with a `vi.fn` returning canned responses
   (`/meta` → the fixture, `/simulations…` → `[]`).
 - Current coverage spans the UI smoke, atlas, event helper, Live, app-shell, and
-  Replay tests (18 tests at the time of this guide update):
+  Replay tests (run `npx vitest run packages/ui` for the current count — do not
+  trust hard-coded numbers here):
   1. `api.control` sends **no** body and **no** JSON content-type.
   2. `api.createSimulation` sends JSON body + content-type.
   3. App renders the fiction notice, creates without a blocking acknowledgment,

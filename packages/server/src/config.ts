@@ -5,7 +5,7 @@ export const EnvSchema = z.object({
   PORT: z.coerce.number().int().default(8787),
   HOST: z.string().default('127.0.0.1'),
   DB_PATH: z.string().default('./data/aiww.sqlite'),
-  LOG_LEVEL: z.string().default('info'),
+  LOG_LEVEL: z.enum(['silent', 'error', 'warn', 'info', 'debug']).default('silent'),
   DEFAULT_PROVIDER: z.enum(['mock', 'openrouter']).default('mock'),
   OPENROUTER_API_KEY: z.string().default(''),
   OPENROUTER_BASE_URL: z.string().default('https://openrouter.ai/api/v1'),
@@ -16,7 +16,6 @@ export const EnvSchema = z.object({
   OPENROUTER_MAX_RETRIES: z.coerce.number().int().default(3),
   OPENROUTER_RETRY_BASE_DELAY_MS: z.coerce.number().int().default(500),
   OPENROUTER_CATALOG_CACHE_TTL_MS: z.coerce.number().int().default(300_000),
-  OPENROUTER_RESPONSE_CACHE_TTL_MS: z.coerce.number().int().default(600_000),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

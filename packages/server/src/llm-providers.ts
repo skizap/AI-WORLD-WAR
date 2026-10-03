@@ -129,7 +129,6 @@ export class OpenRouterAgentProvider implements AgentProvider {
         simulationId: this.simulationId,
         turn: ctx.turn,
         jsonMode: true,
-        cache: false,
       },
     );
     record(result.audit);
@@ -164,7 +163,6 @@ export class OpenRouterAgentProvider implements AgentProvider {
         simulationId: this.simulationId,
         turn: ctx.turn,
         jsonMode: true,
-        cache: false,
       },
     );
     record(repair.audit);
@@ -209,7 +207,6 @@ export class OpenRouterNarratorProvider implements NarratorProvider {
         simulationId: this.simulationId,
         turn: input.turn,
         jsonMode: true,
-        cache: false,
       },
     );
     record(result.audit);
@@ -264,7 +261,7 @@ function shimWorld(): WorldStateLike {
       models: { nationAgent: 'x', nationAgents: {}, worldNarrator: 'x', repair: 'x' },
       temperature: 0.7,
       maxTokens: 1024,
-      observation: { includeHistory: true, includeGoals: true, includeMessages: true, stateMode: 'full', severityVisibility: 'hidden', framing: 'neutral', includeNarratorSummaries: false },
+      observation: { includeHistory: true, includeGoals: true, stateMode: 'full', severityVisibility: 'hidden', framing: 'neutral', includeNarratorSummaries: false },
       limits: { nonMessagePerTurn: 3, messagePerTurn: 4, maxMessageLength: 280, maxRationaleLength: 1000, allowDuplicates: false },
       scoring: { scheme: 'default' },
       narratorEnabled: true,

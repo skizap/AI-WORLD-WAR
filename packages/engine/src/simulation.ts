@@ -97,6 +97,9 @@ export class Simulation {
   status: SimulationStatus = 'idle';
   phase: SimPhase = 'deciding';
   stopReason: string | null = null;
+  /** Runtime stop request: the current turn finishes and persists before the
+   * run is marked stopped. Never set directly by callers. */
+  stopRequested = false;
 
   private snapshots = new Map<number, WorldState>();
   private decisions = new Map<string, DecisionRecord>();
@@ -110,7 +113,6 @@ export class Simulation {
   private providerFailureCount = 0;
   private validationFailureCount = 0;
   private narratorFallbackCount = 0;
-  private stopped = false;
 
   readonly simulationId: string;
 
@@ -123,7 +125,7 @@ export class Simulation {
     this.simulationId = opts.simulationId ?? `sim_${computeConfigHash(opts.config)}_${opts.config.seed}`;
     this.world = initWorld(this.config, this.pack, this.scenario, this.simulationId);
     this.snapshots.set(0, structuredClone(this.world));
-    this.allianceCount = this.world.alliances.length;
+    this.allianceCount = this.world.alliances.filter((a) => a.status === 'active').length;
   }
 
   getSnapshot(turn: number): WorldState | undefined {
@@ -153,9 +155,44 @@ export class Simulation {
     return [...this.decisions.values()].sort((a, b) => a.turn - b.turn || a.nationId.localeCompare(b.nationId));
   }
 
+  /** True when the current turn has recorded any decision, queue, or event. */
+  private get turnHasProgress(): boolean {
+    return this.decisionCursor > 0 || this.queue.length > 0 || this.turnEvents.length > 0;
+  }
+
+  /** Idempotent stop request. Terminal statuses are immutable: requesting a
+   * stop on a terminal run never rewrites its recorded outcome. The current
+   * turn is finished and persisted before the run finalizes as stopped. */
   requestStop(reason = 'Stopped by user'): void {
-    this.stopped = true;
-    this.stopReason = reason;
+    if (this.status === 'completed' || this.status === 'stopped' || this.status === 'failed') return;
+    if (!this.stopRequested) this.stopReason = reason;
+    this.stopRequested = true;
+  }
+
+  /** Finalize an explicit run failure: terminal phase/status, persisted reason,
+   * and an auditable system event. Existing state reached before the failure is
+   * kept as an explicitly partial record. */
+  finalizeFailure(message: string): void {
+    if (this.status === 'completed' || this.status === 'stopped' || this.status === 'failed') return;
+    this.status = 'failed';
+    this.phase = 'done';
+    this.stopReason = message.slice(0, 600);
+    addEvent(this.world, {
+      turn: this.world.turn,
+      type: 'system',
+      status: 'info',
+      message: `Run failed and stopped as an explicit partial record: ${message.slice(0, 400)}`,
+      stateChanges: [],
+      relChanges: [],
+    });
+  }
+
+  private finalizeStop(): void {
+    // A begun-but-unrecorded turn is rewound so world.turn never points at an
+    // unreplayable partial turn after a user stop.
+    if (this.status === 'running' && !this.turnHasProgress && this.snapshots.has(this.world.turn - 1)) {
+      this.world.turn -= 1;
+    }
     this.status = 'stopped';
     this.phase = 'done';
   }
@@ -163,10 +200,16 @@ export class Simulation {
   /** Advance the simulation by one sub-step (one decision or one resolution). */
   async step(): Promise<void> {
     if (this.status === 'completed' || this.status === 'stopped' || this.status === 'failed') return;
-    if (this.stopped) {
-      this.status = 'stopped';
-      this.phase = 'done';
-      return;
+    if (this.stopRequested) {
+      if (this.status === 'idle') {
+        this.finalizeStop();
+        return;
+      }
+      if (this.phase === 'deciding' && !this.turnHasProgress) {
+        this.finalizeStop();
+        return;
+      }
+      // Mid-turn: finish and persist the current turn before stopping.
     }
     if (this.status === 'idle') {
       this.status = 'running';
@@ -405,7 +448,7 @@ export class Simulation {
 
     for (const q of ordered) {
       if (q.entry.id === 'wait') {
-        const { stateChanges } = applyEffects(this.world, q.nationId, undefined, this.waitEffects(), "wait");
+        const applied = applyEffects(this.world, q.nationId, undefined, this.waitEffects(), "wait");
         this.turnEvents.push(
           addEvent(this.world, {
             turn,
@@ -415,8 +458,9 @@ export class Simulation {
             actionId: 'wait',
             severity: q.entry.category,
             message: q.rationale?.slice(0, 300),
-            stateChanges,
-            relChanges: [],
+            stateChanges: applied.stateChanges,
+            relChanges: applied.relChanges,
+            structuralChanges: applied.structuralChanges,
           }),
         );
         continue;
@@ -441,7 +485,13 @@ export class Simulation {
         continue;
       }
       const effects = this.effectsFor(q.entry, q.action);
-      const applied = applyEffects(this.world, q.nationId, targetId, [...effects.self, ...effects.other], `${q.entry.id} (v${q.entry.version})`);
+      const applied = applyEffects(this.world, q.nationId, targetId, [...effects.self, ...effects.other], `${q.entry.id} (v${q.entry.version})`, { actionId: q.entry.id });
+      // The declared public event template is the display fallback when the
+      // agent did not send a message; {actor}/{target} resolve to names.
+      const nameOf = (id: string) => this.pack.nations.find((n) => n.id === id)?.name ?? id;
+      const templateMessage = q.entry.publicEventTemplate
+        .replace('{actor}', nameOf(q.nationId))
+        .replace('{target}', targetId ? nameOf(targetId) : '—');
       this.turnEvents.push(
         addEvent(this.world, {
           turn,
@@ -451,9 +501,10 @@ export class Simulation {
           targetId,
           actionId: q.entry.id,
           severity: q.entry.category,
-          message: q.action.message?.slice(0, 600),
+          message: (q.action.message?.slice(0, 600)) ?? templateMessage,
           stateChanges: applied.stateChanges,
           relChanges: applied.relChanges,
+          structuralChanges: applied.structuralChanges,
           details: q.rationale?.slice(0, 400),
         }),
       );
@@ -477,7 +528,7 @@ export class Simulation {
     const stop = this.checkStopConditions();
     if (stop) {
       this.stopReason = stop;
-      this.status = this.stopped ? 'stopped' : 'completed';
+      this.status = this.stopRequested ? 'stopped' : 'completed';
       this.phase = 'done';
       return;
     }
@@ -486,7 +537,8 @@ export class Simulation {
       this.phase = 'done';
       return;
     }
-    if (this.stopped) {
+    if (this.stopRequested) {
+      // Turn-boundary stop: the completed turn is persisted above.
       this.status = 'stopped';
       this.phase = 'done';
       return;
@@ -502,8 +554,28 @@ export class Simulation {
     for (const e of violent) {
       const attacker = e.actorId!;
       const target = e.targetId!;
-      // Extra trust damage on the attacked pair.
-      applyEffects(this.world, attacker, target, [{ kind: 'rel_delta', dimension: 'trust', scope: 'pair', delta: -10 }], 'second-order: trust collapse after armed attack');
+      // Extra trust damage on the attacked pair; recorded as its own audited event.
+      const collapse = applyEffects(
+        this.world,
+        attacker,
+        target,
+        [{ kind: 'rel_delta', dimension: 'trust', scope: 'pair', delta: -10 }],
+        'second-order: trust collapse after armed attack',
+        { actionId: e.actionId },
+      );
+      this.turnEvents.push(
+        addEvent(this.world, {
+          turn: this.world.turn,
+          type: 'passive',
+          status: 'accepted',
+          actorId: attacker,
+          targetId: target,
+          message: `Second-order trust collapse between ${attacker} and ${target} after armed attack.`,
+          stateChanges: collapse.stateChanges,
+          relChanges: collapse.relChanges,
+          structuralChanges: collapse.structuralChanges,
+        }),
+      );
       // Alliance solidarity: allies of the target harden toward the attacker.
       for (const al of this.world.alliances.filter((a) => a.status === 'active')) {
         if (al.members.includes(target) && !al.members.includes(attacker)) {
@@ -517,6 +589,7 @@ export class Simulation {
               { kind: 'rel_delta', dimension: 'tension', scope: 'pair', delta: 4 },
             ],
             'second-order: alliance solidarity reaction',
+            { actionId: e.actionId },
           );
           this.turnEvents.push(
             addEvent(this.world, {
@@ -528,6 +601,7 @@ export class Simulation {
               message: `Alliance solidarity reaction of ${ally} against ${attacker}.`,
               stateChanges: applied.stateChanges,
               relChanges: applied.relChanges,
+              structuralChanges: applied.structuralChanges,
             }),
           );
         }
@@ -637,6 +711,7 @@ export class Simulation {
           message: 'Alliance maintenance.',
           stateChanges: [],
           relChanges: applied.relChanges,
+          structuralChanges: applied.structuralChanges,
         });
       }
     }

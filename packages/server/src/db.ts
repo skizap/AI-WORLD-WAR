@@ -152,6 +152,27 @@ export class Db {
     return this.db.prepare(sql).get(...(params as never[])) as T | undefined;
   }
 
+  /**
+   * Run a batch of writes atomically: a crash or error leaves either the whole
+   * batch persisted or none of it, so a turn can never look fully saved when
+   * only some of its records were written.
+   */
+  withTransaction<T>(fn: () => T): T {
+    this.exec('BEGIN IMMEDIATE');
+    try {
+      const result = fn();
+      this.exec('COMMIT');
+      return result;
+    } catch (err) {
+      try {
+        this.exec('ROLLBACK');
+      } catch {
+        // rollback of a broken connection must not mask the original error
+      }
+      throw err;
+    }
+  }
+
   close(): void {
     this.db.close();
   }

@@ -13,6 +13,8 @@ import {
   clampRelationship,
   clampVariable,
   relPairKey,
+  sortedPairKey,
+  type AllianceStatus,
   type AuditEvent,
   type CatalogEntry,
   type Effect,
@@ -23,14 +25,17 @@ import {
   type SimulationConfig,
   type StateChange,
   type RelChange,
+  type StructuralChange,
   type VariableName,
   type WorldEvent,
   type WorldState,
 } from '@aiww/schemas';
 import { Rng } from './rng.js';
 
-export const CODE_VERSION = '0.2.0';
+export const CODE_VERSION = '0.3.0';
 export const PROMPT_VERSION = '1.1.0';
+/** Global fictional stability value every new world starts at. */
+export const INITIAL_GLOBAL_STABILITY = 75;
 
 /** Stable JSON stringify with sorted object keys (for hashing). */
 export function stableJson(value: unknown): string {
@@ -51,7 +56,9 @@ export function newId(prefix: string, rng: Rng): string {
 }
 
 /** Event and audit ids derive from the world arrays, keeping runs reproducible
- * within a single process (no module-level counters). */
+ * within a single process (no module-level counters). Audit events are appended
+ * only through addEvent() (exactly once per mutating/rejected event) or explicit
+ * failure/system audits; applyEffects() never audits on its own. */
 
 export function addAudit(w: WorldState, ev: Omit<AuditEvent, 'id'>): AuditEvent {
   const audit: AuditEvent = { ...ev, id: `aud_${w.auditEvents.length.toString(36)}` };
@@ -62,7 +69,15 @@ export function addAudit(w: WorldState, ev: Omit<AuditEvent, 'id'>): AuditEvent 
 export function addEvent(w: WorldState, ev: Omit<WorldEvent, 'id' | 'seq'>): WorldEvent {
   const event: WorldEvent = { ...ev, id: `ev_${w.events.length.toString(36)}`, seq: w.events.length };
   w.events.push(event);
-  if ((event.stateChanges?.length ?? 0) > 0 || (event.relChanges?.length ?? 0) > 0) {
+  // Single audit site: an event that carries mutations or a rejection is
+  // audited exactly once, here.
+  const structural = event.structuralChanges?.length ?? 0;
+  if (
+    (event.stateChanges?.length ?? 0) > 0 ||
+    (event.relChanges?.length ?? 0) > 0 ||
+    structural > 0 ||
+    event.status === 'rejected'
+  ) {
     addAudit(w, {
       turn: ev.turn,
       type: event.status === 'rejected' ? 'action_rejected' : 'state_transition',
@@ -74,6 +89,7 @@ export function addEvent(w: WorldState, ev: Omit<WorldEvent, 'id' | 'seq'>): Wor
         event.reason,
         `${event.stateChanges?.length ?? 0} var change(s)`,
         `${event.relChanges?.length ?? 0} rel change(s)`,
+        `${structural} structural change(s)`,
       ]
         .filter(Boolean)
         .join(' '),
@@ -106,6 +122,65 @@ export function getRel(w: WorldState, a: string, b: string): RelationshipState {
   return rel;
 }
 
+/** Committed pairwise alliance status: the most mutual-committing status of the
+ * two directed relationship entries ('active' > 'proposed' > 'none'). */
+function committedAllianceStatus(x: RelationshipState | undefined, y: RelationshipState | undefined): AllianceStatus {
+  const statuses = [x?.alliance, y?.alliance];
+  if (statuses.includes('active')) return 'active';
+  if (statuses.includes('proposed')) return 'proposed';
+  return 'none';
+}
+
+/**
+ * Make the global alliance records agree with the relationship projections:
+ * alliances are mutual, so both directed entries are set to the committed
+ * status and exactly one record per pair exists (or none for 'none').
+ * Called at initialization and after every alliance mutation.
+ */
+export function reconcileAlliances(w: WorldState, turn = 0): void {
+  const ids = Object.keys(w.nations);
+  const seenPairs = new Set<string>();
+  for (const a of ids) {
+    for (const b of ids) {
+      if (a === b) continue;
+      const pairKey = sortedPairKey(a, b);
+      if (seenPairs.has(pairKey)) continue;
+      seenPairs.add(pairKey);
+      const fwd = w.relationships[relPairKey(a, b)];
+      const bwd = w.relationships[relPairKey(b, a)];
+      const status = committedAllianceStatus(fwd, bwd);
+      if (fwd) fwd.alliance = status;
+      if (bwd) bwd.alliance = status;
+      const members = [a, b].sort() as [string, string];
+      const existing = w.alliances.find(
+        (al) => al.members[0] === members[0] && al.members[1] === members[1],
+      );
+      if (status === 'none') {
+        if (existing) w.alliances = w.alliances.filter((al) => al !== existing);
+        continue;
+      }
+      if (existing) {
+        const prior = existing.status;
+        existing.status = status;
+        // Activation turn is when the alliance first became active.
+        if (status === 'active' && prior !== 'active' && turn > 0) {
+          existing.formedTurn = turn;
+        }
+      } else {
+        w.alliances.push({ members, formedTurn: turn, status });
+      }
+    }
+  }
+  // Defensive: drop any duplicate records for the same pair (keep the first).
+  const seen = new Set<string>();
+  w.alliances = w.alliances.filter((al) => {
+    const key = al.members.join('~');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Initialize a fresh world from configuration, pack, and scenario. */
 export function initWorld(config: SimulationConfig, pack: NationPack, scenario: Scenario, simulationId: string): WorldState {
   const ids = pack.nations.map((n) => n.id);
@@ -123,7 +198,7 @@ export function initWorld(config: SimulationConfig, pack: NationPack, scenario: 
     relationships: {},
     alliances: [],
     turnOrder: [],
-    globalStability: 75,
+    globalStability: INITIAL_GLOBAL_STABILITY,
     ongoingEffects: [],
     events: [],
     auditEvents: [],
@@ -157,9 +232,6 @@ export function initWorld(config: SimulationConfig, pack: NationPack, scenario: 
         if (!dir.disputes.some((x) => x.id === d.id)) dir.disputes.push(d);
       }
     }
-    if (o.alliance === 'active') {
-      w.alliances.push({ members: [o.a, o.b].sort() as [string, string], formedTurn: 0, status: 'active' });
-    }
   }
   for (const d of scenario.unresolvedDisputes) {
     for (const [a, b] of [
@@ -172,6 +244,8 @@ export function initWorld(config: SimulationConfig, pack: NationPack, scenario: 
       }
     }
   }
+
+  reconcileAlliances(w);
 
   // Scenario resource damage.
   const changes: StateChange[] = [];
@@ -228,15 +302,29 @@ export function initWorld(config: SimulationConfig, pack: NationPack, scenario: 
 export interface AppliedChanges {
   stateChanges: StateChange[];
   relChanges: RelChange[];
+  structuralChanges: StructuralChange[];
+}
+
+export interface EffectMeta {
+  /** Catalog action id the effects originate from (recorded with provocations). */
+  actionId?: string;
 }
 
 function otherIds(w: WorldState, except: string[]): string[] {
   return Object.keys(w.nations).filter((id) => !except.includes(id));
 }
 
+/** Deterministic unique dispute id for one actor/target/subject/turn. */
+function disputeId(turn: number, actingId: string, targetId: string, subject: string): string {
+  const slug = subject.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'dispute';
+  return `dispute_${turn}_${actingId}_${targetId}_${slug}`;
+}
+
 /**
  * Apply a list of declarative effects. Deterministic; clamps all values;
- * records every before/after. Returns the change records for the event log.
+ * records every before/after as typed deltas (nation variables, relationship
+ * dimensions, and structural world state). Never writes audit events — the
+ * caller records exactly one event (audited once) per mutation batch.
  */
 export function applyEffects(
   w: WorldState,
@@ -244,9 +332,11 @@ export function applyEffects(
   targetId: string | undefined,
   effects: Effect[],
   explanation: string,
+  meta: EffectMeta = {},
 ): AppliedChanges {
   const stateChanges: StateChange[] = [];
   const relChanges: RelChange[] = [];
+  const structuralChanges: StructuralChange[] = [];
 
   const bumpVar = (nationId: string, variable: VariableName, delta: number, why: string, mitigatable = false) => {
     let d = delta;
@@ -326,56 +416,85 @@ export function applyEffects(
       case 'alliance_set': {
         if (targetId) {
           const tRel = getRel(w, actingId, targetId);
-          const sRel = getRel(w, targetId, actingId);
+          const before = committedAllianceStatus(tRel, getRel(w, targetId, actingId));
+          let state: AllianceStatus = eff.state;
           if (eff.state === 'active') {
+            // Activation requires the target's affinity toward the actor.
             const accept = tRel.affinity >= 50;
-            const state = accept ? 'active' : 'proposed';
-            tRel.alliance = state;
-            sRel.alliance = state;
-            if (state === 'active' && !w.alliances.some((al) => al.members.join() === [actingId, targetId].sort().join())) {
-              w.alliances.push({ members: [actingId, targetId].sort() as [string, string], formedTurn: w.turn, status: 'active' });
-            }
-          } else {
-            tRel.alliance = eff.state;
-            sRel.alliance = eff.state;
-            if (eff.state !== 'proposed') {
-              w.alliances = w.alliances.filter(
-                (al) => !(al.members.includes(actingId) && al.members.includes(targetId)),
-              );
-            }
+            state = accept ? 'active' : 'proposed';
           }
+          // Alliances are mutual: write both directed entries, then reconcile
+          // the single global record for the pair.
+          tRel.alliance = state;
+          getRel(w, targetId, actingId).alliance = state;
+          reconcileAlliances(w, w.turn);
+          structuralChanges.push({
+            kind: 'alliance',
+            pairKey: sortedPairKey(actingId, targetId),
+            members: [actingId, targetId].sort() as [string, string],
+            before,
+            after: state,
+          });
         }
         break;
       }
       case 'intelligence_set':
         if (targetId) {
-          getRel(w, actingId, targetId).intelligenceSharing = eff.value;
-          getRel(w, targetId, actingId).intelligenceSharing = eff.value;
+          const fwd = getRel(w, actingId, targetId);
+          const bwd = getRel(w, targetId, actingId);
+          const before = fwd.intelligenceSharing;
+          if (before !== eff.value) {
+            fwd.intelligenceSharing = eff.value;
+            bwd.intelligenceSharing = eff.value;
+            structuralChanges.push({
+              kind: 'intelligence_sharing',
+              pairKey: sortedPairKey(actingId, targetId),
+              before,
+              after: eff.value,
+            });
+          }
         }
         break;
       case 'dispute_add':
         if (targetId) {
-          const d = { id: `dispute_${w.turn}_${actingId}_${targetId}`, subject: eff.subject, openedTurn: w.turn };
+          const id = disputeId(w.turn, actingId, targetId, eff.subject);
+          const pairKey = relPairKey(actingId, targetId);
+          const d = { id, subject: eff.subject, openedTurn: w.turn };
           for (const [x, y] of [
             [actingId, targetId],
             [targetId, actingId],
           ]) {
             const r = getRel(w, x, y);
-            if (!r.disputes.some((dd) => dd.subject === eff.subject)) r.disputes.push({ ...d });
+            if (!r.disputes.some((dd) => dd.id === id || dd.subject === eff.subject)) r.disputes.push({ ...d });
           }
+          structuralChanges.push({ kind: 'dispute_added', disputeId: id, pairKey, subject: eff.subject });
         }
         break;
-      case 'dispute_resolve':
+      case 'dispute_resolve': {
         if (targetId) {
-          for (const [x, y] of [
-            [actingId, targetId],
-            [targetId, actingId],
-          ]) {
-            const r = getRel(w, x, y);
-            if (r.disputes.length > 0) r.disputes.shift();
+          const fwd = getRel(w, actingId, targetId);
+          // Resolve the oldest active dispute (stable identity, not array position).
+          const resolved = [...fwd.disputes].sort(
+            (a, b) => a.openedTurn - b.openedTurn || a.id.localeCompare(b.id),
+          )[0];
+          if (resolved) {
+            for (const [x, y] of [
+              [actingId, targetId],
+              [targetId, actingId],
+            ]) {
+              const r = getRel(w, x, y);
+              r.disputes = r.disputes.filter((dd) => dd.id !== resolved.id);
+            }
+            structuralChanges.push({
+              kind: 'dispute_resolved',
+              disputeId: resolved.id,
+              pairKey: relPairKey(actingId, targetId),
+              subject: resolved.subject,
+            });
           }
         }
         break;
+      }
       case 'ongoing_add':
         if (targetId) {
           w.ongoingEffects.push({
@@ -385,48 +504,43 @@ export function applyEffects(
             remainingTurns: eff.turns,
             perTurn: eff.perTurn.map((p) => ({ ...p })),
           });
+          structuralChanges.push({
+            kind: 'ongoing_effect_added',
+            effect: eff.effect,
+            sourceId: actingId,
+            targetId,
+            remainingTurns: eff.turns,
+          });
         }
-        break;
-      case 'ongoing_remove':
-        w.ongoingEffects = w.ongoingEffects.filter(
-          (o) => !(o.effect === eff.effect && (o.sourceId === actingId || o.targetId === targetId)),
-        );
         break;
       case 'global_stability_delta': {
         const before = w.globalStability;
         const after = Math.min(100, Math.max(0, before + eff.delta));
         if (after !== before) {
           w.globalStability = after;
-          stateChanges.push({
-            nationId: actingId,
-            variable: 'politicalStability',
-            before,
-            after,
-            explanation: `Global fictional stability: ${explanation} (world-level, not a national variable)`,
-          });
+          // Typed world-level delta; never encoded as a nation variable.
+          structuralChanges.push({ kind: 'global_stability', before, after });
         }
         break;
       }
       case 'provocation_add':
         if (targetId) {
-          getRel(w, targetId, actingId).provocations.push({ turn: w.turn, actionId: 'recent', byNationId: actingId });
-          // Keep only the 5 most recent provocations.
           const r = getRel(w, targetId, actingId);
+          r.provocations.push({ turn: w.turn, actionId: meta.actionId ?? explanation, byNationId: actingId });
+          // Keep only the 5 most recent provocations.
           if (r.provocations.length > 5) r.provocations.splice(0, r.provocations.length - 5);
+          structuralChanges.push({
+            kind: 'provocation_added',
+            pairKey: relPairKey(targetId, actingId),
+            byNationId: actingId,
+            turn: w.turn,
+          });
         }
         break;
     }
   }
 
-  if (stateChanges.length > 0 || relChanges.length > 0) {
-    addAudit(w, {
-      turn: w.turn,
-      type: 'state_transition',
-      actor: actingId,
-      payload: `${explanation}: ${stateChanges.length} state, ${relChanges.length} relationship change(s)`,
-    });
-  }
-  return { stateChanges, relChanges };
+  return { stateChanges, relChanges, structuralChanges };
 }
 
 /** Clamp every numeric value back into bounds (defensive invariant). */

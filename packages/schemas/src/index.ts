@@ -263,6 +263,62 @@ export const RelChange = z.object({
 });
 export type RelChange = z.infer<typeof RelChange>;
 
+/**
+ * Typed structural deltas for world-level state that is not a nation variable:
+ * global stability, alliances, disputes, intelligence sharing, ongoing effects,
+ * and provocations. Metrics and UI read these instead of parsing explanation
+ * prose. Optional on WorldEvent so records written by older engine versions
+ * remain interpretable.
+ */
+export const StructuralChange = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('global_stability'), before: z.number(), after: z.number() }),
+  z.object({
+    kind: z.literal('alliance'),
+    pairKey: z.string(),
+    members: z.tuple([z.string(), z.string()]),
+    before: AllianceStatus,
+    after: AllianceStatus,
+  }),
+  z.object({
+    kind: z.literal('dispute_added'),
+    disputeId: z.string(),
+    pairKey: z.string(),
+    subject: z.string(),
+  }),
+  z.object({
+    kind: z.literal('dispute_resolved'),
+    disputeId: z.string(),
+    pairKey: z.string(),
+    subject: z.string(),
+  }),
+  z.object({
+    kind: z.literal('intelligence_sharing'),
+    pairKey: z.string(),
+    before: z.boolean(),
+    after: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal('ongoing_effect_added'),
+    effect: z.string(),
+    sourceId: z.string(),
+    targetId: z.string(),
+    remainingTurns: z.number().int().positive(),
+  }),
+  z.object({
+    kind: z.literal('ongoing_effect_removed'),
+    effect: z.string(),
+    sourceId: z.string().optional(),
+    targetId: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal('provocation_added'),
+    pairKey: z.string(),
+    byNationId: z.string(),
+    turn: z.number().int().nonnegative(),
+  }),
+]);
+export type StructuralChange = z.infer<typeof StructuralChange>;
+
 export const WorldEvent = z.object({
   id: z.string(),
   turn: z.number().int().nonnegative(),
@@ -277,6 +333,7 @@ export const WorldEvent = z.object({
   reason: z.string().optional(),
   stateChanges: z.array(StateChange),
   relChanges: z.array(RelChange),
+  structuralChanges: z.array(StructuralChange).optional(),
   details: z.string().optional(),
 });
 export type WorldEvent = z.infer<typeof WorldEvent>;
@@ -306,7 +363,7 @@ export const AllianceRecord = z.object({
 export type AllianceRecord = z.infer<typeof AllianceRecord>;
 
 export const OngoingEffect = z.object({
-  effect: z.enum(['sanctions', 'blockade', 'occupation', 'cyber_disruption', 'recovery', 'military_strain']),
+  effect: z.enum(['sanctions', 'blockade', 'occupation', 'cyber_disruption', 'recovery']),
   sourceId: NationId,
   targetId: NationId,
   remainingTurns: z.number().int().positive(),
@@ -350,7 +407,6 @@ export type ScoringScheme = z.infer<typeof ScoringScheme>;
 export const ObservationConfig = z.object({
   includeHistory: z.boolean(),
   includeGoals: z.boolean(),
-  includeMessages: z.boolean(),
   stateMode: z.enum(['full', 'deltas']),
   severityVisibility: z.enum(['hidden', 'exposed']),
   framing: z.enum(['neutral', 'low_stakes']),
@@ -397,6 +453,11 @@ export const SimulationConfig = z.object({
   passiveRulesEnabled: z.boolean(),
   turnOrderMode: z.enum(['seeded_shuffle', 'fixed_pack_order']),
   stopConditions: StopConditions,
+  /**
+   * Deprecated, declared-only field with no behavioral effect (both values
+   * behave identically); the persistent fiction notice is enforced in code
+   * instead. Retained for backward compatibility with saved configurations.
+   */
   safetyMode: z.enum(['fictional_only', 'educational_fictionalization']),
 });
 export type SimulationConfig = z.infer<typeof SimulationConfig>;
@@ -428,7 +489,6 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = {
   observation: {
     includeHistory: true,
     includeGoals: true,
-    includeMessages: true,
     stateMode: 'full',
     severityVisibility: 'hidden',
     framing: 'neutral',
@@ -491,13 +551,9 @@ export const Effect = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('dispute_resolve') }),
   z.object({
     kind: z.literal('ongoing_add'),
-    effect: z.enum(['sanctions', 'blockade', 'occupation', 'cyber_disruption', 'recovery', 'military_strain']),
+    effect: z.enum(['sanctions', 'blockade', 'occupation', 'cyber_disruption', 'recovery']),
     turns: z.number().int().positive(),
     perTurn: z.array(z.object({ scope: EffectScope, variable: VariableName, delta: z.number() })),
-  }),
-  z.object({
-    kind: z.literal('ongoing_remove'),
-    effect: z.enum(['sanctions', 'blockade', 'occupation', 'cyber_disruption', 'recovery', 'military_strain']),
   }),
   z.object({ kind: z.literal('global_stability_delta'), delta: z.number() }),
   z.object({ kind: z.literal('provocation_add') }),
@@ -554,7 +610,6 @@ export const Scenario = z.object({
   name: z.string(),
   description: z.string(),
   publicNarrative: z.string(),
-  escalationBaseline: z.number().min(0).max(2),
   initialEvents: z.array(ScenarioInitialEvent),
   relationshipOverrides: z.array(
     z.object({
@@ -663,6 +718,8 @@ export const RunMetrics = z.object({
   model: z.string(),
   scheme: ScoringScheme,
   totalTurns: z.number().int().positive(),
+  /** Metric-contract version; '2' derives stability/impact from typed deltas and reports a true cumulative mean. */
+  metricVersion: z.string(),
   turns: z.array(TurnMetrics),
   spikes: z.array(SpikeRecord),
   allianceFormation: z.number(),
@@ -674,6 +731,7 @@ export const RunMetrics = z.object({
   providerFailureCount: z.number(),
   validationFailureCount: z.number(),
   totals: z.object({
+    /** Mean of the per-turn mean scores (true cumulative mean of the run). */
     cumulativeMeanScore: z.number(),
     violentActionCount: z.number(),
     nuclearActionCount: z.number(),
@@ -703,6 +761,8 @@ export const ExperimentRecord = z.object({
   simulationId: z.string(),
   experimentId: z.string(),
   seed: z.string(),
+  /** Effective seed actually used by the replicate (differs from `seed` when replicates derive independent seeds). */
+  effectiveSeed: z.string().optional(),
   model: z.string(),
   scenarioId: z.string(),
   replicate: z.number().int().nonnegative(),
@@ -773,5 +833,7 @@ export const SimulationStatus = z.enum([
   'completed',
   'stopped',
   'failed',
+  /** Saved run whose process ended before a terminal status; read-only history. */
+  'interrupted',
 ]);
 export type SimulationStatus = z.infer<typeof SimulationStatus>;
